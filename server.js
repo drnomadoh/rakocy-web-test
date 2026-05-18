@@ -11,10 +11,19 @@ app.get('/', async (req, res) => {
   try {
     const prices = await getAllPrices();
     const latest = await getLatestPrice();
-    res.render('index', { prices, latest });
+
+    res.render('index', { 
+      prices: prices || [], 
+      latest: latest || null,
+      error: null 
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Error loading data from database');
+    console.error('Database error:', err.message);
+    res.render('index', { 
+      prices: [], 
+      latest: null, 
+      error: 'Unable to load data from database. Please check connection settings.' 
+    });
   }
 });
 
