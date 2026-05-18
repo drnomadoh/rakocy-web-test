@@ -1,0 +1,33 @@
+{
+  "name": "rakocy-web-test",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/drnomadoh/rakocy-web-test.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/drnomadoh/rakocy-web-test/issues"
+  },
+  "homepage": "https://github.com/drnomadoh/rakocy-web-test#readme",
+  "dependencies": {
+    "axios": "^1.16.1",
+    "cheerio": "^1.2.0",
+    "ejs": "^5.0.2",
+    "express": "^5.2.1",
+    "mssql": "^12.5.4",
+    "node-cron": "^4.2.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}

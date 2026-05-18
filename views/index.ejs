@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Silver Price Tracker</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; }
+    table { border-collapse: collapse; width: 100%; max-width: 800px; }
+    th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+    th { background-color: #f4f4f4; }
+    .latest { background-color: #e8f5e9; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+    button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Silver Price Tracker</h1>
+
+  <% if (latest) { %>
+    <div class="latest">
+      <h2>Latest Price: $<%= latest.price %> / oz</h2>
+      <p><strong>Date:</strong> <%= latest.price_date %></p>
+      <% if (latest.change_amount) { %>
+        <p><strong>Change:</strong> <%= latest.change_amount %> (<%= latest.change_percent %>%)</p>
+      <% } %>
+    </div>
+  <% } %>
+
+  <form action="/scrape" method="POST">
+    <button type="submit">Scrape Latest Price Now</button>
+  </form>
+
+  <h2>Price History</h2>
+
+  <% if (prices && prices.length > 0) { %>
+    <table>
+      <tr>
+        <th>Date</th>
+        <th>Price (USD/oz)</th>
+        <th>Change ($)</th>
+        <th>Change (%)</th>
+        <th>Scraped At</th>
+      </tr>
+      <% prices.forEach(function(p) { %>
+        <tr>
+          <td><%= p.price_date %></td>
+          <td>$<%= p.price %></td>
+          <td><%= p.change_amount || '-' %></td>
+          <td><%= p.change_percent || '-' %>%</td>
+          <td><%= p.scraped_at %></td>
+        </tr>
+      <% }) %>
+    </table>
+  <% } else { %>
+    <p>No price data yet. Click the button above to scrape the first price.</p>
+  <% } %>
+
+</body>
+</html>
