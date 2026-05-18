@@ -5,55 +5,129 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Silver Price Tracker</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 40px; }
-    table { border-collapse: collapse; width: 100%; max-width: 800px; }
-    th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
-    th { background-color: #f4f4f4; }
-    .latest { background-color: #e8f5e9; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
-    button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 40px;
+      background-color: #f8f9fa;
+    }
+    h1 { color: #333; }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    .latest {
+      background-color: #d4edda;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 25px;
+      border: 1px solid #c3e6cb;
+    }
+    .warning {
+      background-color: #fff3cd;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      border: 1px solid #ffeeba;
+    }
+    .error {
+      background-color: #f8d7da;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      border: 1px solid #f5c6cb;
+      color: #721c24;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      background-color: white;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    th, td {
+      border: 1px solid #dee2e6;
+      padding: 12px;
+      text-align: left;
+    }
+    th {
+      background-color: #343a40;
+      color: white;
+    }
+    button {
+      background-color: #007bff;
+      color: white;
+      padding: 12px 24px;
+      font-size: 16px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      margin-bottom: 20px;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
   </style>
 </head>
 <body>
-  <h1>Silver Price Tracker</h1>
+  <div class="container">
+    <h1>Silver Price Tracker</h1>
 
-  <% if (latest) { %>
-    <div class="latest">
-      <h2>Latest Price: $<%= latest.price %> / oz</h2>
-      <p><strong>Date:</strong> <%= latest.price_date %></p>
-      <% if (latest.change_amount) { %>
-        <p><strong>Change:</strong> <%= latest.change_amount %> (<%= latest.change_percent %>%)</p>
-      <% } %>
-    </div>
-  <% } %>
+    <!-- Error Message -->
+    <% if (error) { %>
+      <div class="error">
+        <strong>Error:</strong> <%= error %>
+      </div>
+    <% } %>
 
-  <form action="/scrape" method="POST">
-    <button type="submit">Scrape Latest Price Now</button>
-  </form>
+    <!-- Latest Price -->
+    <% if (latest) { %>
+      <div class="latest">
+        <h2>Latest Price: $<%= latest.price %> / oz</h2>
+        <p><strong>Date:</strong> <%= latest.price_date %></p>
+        <% if (latest.change_amount) { %>
+          <p><strong>Change:</strong> <%= latest.change_amount %> (<%= latest.change_percent %>%)</p>
+        <% } %>
+      </div>
+    <% } else if (!error) { %>
+      <div class="warning">
+        <strong>No price data available yet.</strong><br>
+        Click the button below to scrape today's silver price.
+      </div>
+    <% } %>
 
-  <h2>Price History</h2>
+    <!-- Scrape Button -->
+    <form action="/scrape" method="POST">
+      <button type="submit">Scrape Latest Silver Price</button>
+    </form>
 
-  <% if (prices && prices.length > 0) { %>
-    <table>
-      <tr>
-        <th>Date</th>
-        <th>Price (USD/oz)</th>
-        <th>Change ($)</th>
-        <th>Change (%)</th>
-        <th>Scraped At</th>
-      </tr>
-      <% prices.forEach(function(p) { %>
-        <tr>
-          <td><%= p.price_date %></td>
-          <td>$<%= p.price %></td>
-          <td><%= p.change_amount || '-' %></td>
-          <td><%= p.change_percent || '-' %>%</td>
-          <td><%= p.scraped_at %></td>
-        </tr>
-      <% }) %>
-    </table>
-  <% } else { %>
-    <p>No price data yet. Click the button above to scrape the first price.</p>
-  <% } %>
+    <!-- Price History Table -->
+    <h2>Price History</h2>
 
+    <% if (prices && prices.length > 0) { %>
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Price (USD/oz)</th>
+            <th>Change ($)</th>
+            <th>Change (%)</th>
+            <th>Scraped At</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% prices.forEach(function(p) { %>
+            <tr>
+              <td><%= p.price_date %></td>
+              <td>$<%= p.price %></td>
+              <td><%= p.change_amount || '-' %></td>
+              <td><%= p.change_percent || '-' %>%</td>
+              <td><%= p.scraped_at %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } else if (!error) { %>
+      <p>No historical data available yet.</p>
+    <% } %>
+  </div>
 </body>
 </html>
