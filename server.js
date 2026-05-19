@@ -1,7 +1,7 @@
 // server.js
 const express = require('express');
 const sql = require('mssql');
-require('dotenv').config(); // Optional: for local development
+require('dotenv').config(); // For local development only
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -9,11 +9,18 @@ const PORT = process.env.PORT || 3000;
 // ============================================
 // Azure SQL Configuration (Private Endpoint)
 // ============================================
+const connectionString = process.env.DB_CONNECTION_STRING;
+
+if (!connectionString) {
+    console.error("❌ FATAL ERROR: DB_CONNECTION_STRING environment variable is not set!");
+    process.exit(1);
+}
+
 const config = {
-    connectionString: process.env.DB_CONNECTION_STRING,
+    connectionString: connectionString,
     options: {
         encrypt: true,                    // Required for Azure SQL
-        trustServerCertificate: false,    // Recommended for production
+        trustServerCertificate: false,
         enableArithAbort: true
     },
     pool: {
@@ -23,7 +30,7 @@ const config = {
     }
 };
 
-// Create a connection pool (recommended)
+// Connection Pool
 let poolPromise;
 
 async function getPool() {
@@ -35,8 +42,8 @@ async function getPool() {
                 return pool;
             })
             .catch(err => {
-                console.error('❌ Database Connection Failed:', err);
-                poolPromise = null; // Allow retry
+                console.error('❌ Database Connection Failed:', err.message);
+                poolPromise = null; // Allow retry on next request
                 throw err;
             });
     }
@@ -47,10 +54,10 @@ async function getPool() {
 // Routes
 // ============================================
 
-// Health check
+// Health check / Root route
 app.get('/', (req, res) => {
-    res.json({ 
-        status: 'ok', 
+    res.json({
+        status: 'ok',
         message: 'Node.js app running on Azure App Service',
         privateConnection: 'Using Private Endpoint (if VNet Integration is enabled)'
     });
@@ -61,14 +68,14 @@ app.get('/test-db', async (req, res) => {
     try {
         const pool = await getPool();
         const result = await pool.request().query('SELECT 1 AS test, GETDATE() AS currentTime');
-        
+
         res.json({
             success: true,
             message: 'Successfully connected to Azure SQL via Private Endpoint',
             data: result.recordset[0]
         });
     } catch (err) {
-        console.error('Database query error:', err);
+        console.error('Database error:', err);
         res.status(500).json({
             success: false,
             message: 'Failed to connect to database',
@@ -77,12 +84,12 @@ app.get('/test-db', async (req, res) => {
     }
 });
 
-// Example: Get some data from a table
+// Example route - Get data from a table (update table name as needed)
 app.get('/users', async (req, res) => {
     try {
         const pool = await getPool();
-        const result = await pool.request().query('SELECT TOP 10 * FROM Users'); // Change table name
-        
+        const result = await pool.request().query('SELECT TOP 10 * FROM Users');
+
         res.json({
             success: true,
             count: result.recordset.length,
@@ -92,7 +99,7 @@ app.get('/users', async (req, res) => {
         console.error(err);
         res.status(500).json({
             success: false,
-            message: 'Error fetching users',
+            message: 'Error fetching data',
             error: err.message
         });
     }
@@ -102,15 +109,20 @@ app.get('/users', async (req, res) => {
 // Start Server
 // ============================================
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log('Using connection string from environment variable');
+    console.log(`🚀 Server is running on port ${PORT}`);
 });
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
     console.log('Shutting down gracefully...');
     if (poolPromise) {
-        await (await poolPromise).close();
+        try {
+            const pool = await poolPromise;
+            await pool.close();
+            console.log('Database pool closed.');
+        } catch (err) {
+            console.error('Error closing database pool:', err);
+        }
     }
     process.exit(0);
 });
