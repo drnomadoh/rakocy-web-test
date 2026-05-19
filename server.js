@@ -43,7 +43,7 @@ async function fetchSilverPriceFromPolygon() {
     try {
         const to = new Date();
         const from = new Date();
-        from.setDate(from.getDate() - 10); // Wider range to avoid empty results
+        from.setDate(from.getDate() - 30); // Increased to 30 days
 
         const fromStr = from.toISOString().split('T')[0];
         const toStr = to.toISOString().split('T')[0];
@@ -51,13 +51,15 @@ async function fetchSilverPriceFromPolygon() {
         const url = `https://api.massive.com/v2/aggs/ticker/X:XAGUSD/range/1/day/${fromStr}/${toStr}?apiKey=${POLYGON_API_KEY}`;
 
         const response = await axios.get(url, {
-            timeout: 60000,
+            timeout: 60000
         });
 
         console.log('Massive API Response:', JSON.stringify(response.data, null, 2));
 
         if (!response.data.results || response.data.results.length === 0) {
-            throw new Error('No data returned from Massive API. Check logs for details.');
+            throw new Error(
+                `No data returned from Massive API. Status: ${response.data.status || 'Unknown'}`
+            );
         }
 
         const latestBar = response.data.results[response.data.results.length - 1];
