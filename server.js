@@ -18,7 +18,8 @@ const config = {
     password: process.env.DB_PASSWORD,
     options: {
         encrypt: true,
-        trustServerCertificate: false
+        trustServerCertificate: false,
+        enableArithAbort: true
     }
 };
 
@@ -32,61 +33,75 @@ async function getPool() {
 }
 
 // ============================================
-// Scrape Silver Price from MoneyMetals
+// Scrape Silver Price from MoneyMetals (tries both HTTPS and HTTP)
 // ============================================
 async function fetchSilverPriceFromMoneyMetals() {
-    try {
-        const { data } = await axios.get('https://www.moneymetals.com/silver-price', {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    const urlsToTry = [
+        'https://www.moneymetals.com/silver-price',   // TCP 443
+        'http://www.moneymetals.com/silver-price'     // TCP 80
+    ];
+
+    let lastError = null;
+
+    for (const url of urlsToTry) {
+        try {
+            console.log(`Trying to scrape: ${url}`);
+
+            const { data } = await axios.get(url, {
+                timeout: 10000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
+
+            const $ = cheerio.load(data);
+
+            // Extract price (adjust selector if MoneyMetals changes layout)
+            let priceText = $('[class*="price"]').first().text().trim() ||
+                            $('h1, h2, h3').filter((i, el) => $(el).text().includes('$')).first().text().trim() ||
+                            $('body').text().match(/\$[\d,.]+/)?.[0] || '';
+
+            const priceMatch = priceText.match(/[\d,.]+/);
+            if (!priceMatch) {
+                throw new Error(`Could not extract price from ${url}`);
             }
-        });
 
-        const $ = cheerio.load(data);
+            const price = parseFloat(priceMatch[0].replace(',', ''));
+            const timestamp = new Date();
 
-        // Try multiple possible selectors (MoneyMetals sometimes changes layout)
-        let priceText = '';
+            // Save to database
+            const pool = await getPool();
+            await pool.request()
+                .input('Metal', sql.VarChar(10), 'XAG')
+                .input('Price', sql.Decimal(18, 4), price)
+                .input('Timestamp', sql.DateTime2, timestamp)
+                .query(`
+                    INSERT INTO MetalPrices (Metal, Price, Timestamp, Source)
+                    VALUES (@Metal, @Price, @Timestamp, 'MoneyMetals')
+                `);
 
-        // Common patterns on MoneyMetals
-        priceText = $('[class*="price"]').first().text().trim() ||
-                    $('h1, h2, h3').filter((i, el) => $(el).text().includes('$')).first().text().trim() ||
-                    $('body').text().match(/\$[\d,.]+/)?.[0] || '';
+            console.log(`✅ Successfully scraped from ${url}: $${price}`);
+            return {
+                price,
+                timestamp,
+                source: 'MoneyMetals',
+                protocol: url.startsWith('https') ? 'https' : 'http'
+            };
 
-        // Clean the price
-        const priceMatch = priceText.match(/[\d,.]+/);
-        if (!priceMatch) {
-            throw new Error('Could not extract silver price from MoneyMetals');
+        } catch (error) {
+            console.log(`Failed to scrape ${url}: ${error.message}`);
+            lastError = error;
         }
-
-        const price = parseFloat(priceMatch[0].replace(',', ''));
-
-        const timestamp = new Date();
-
-        // Save to database
-        const pool = await getPool();
-        await pool.request()
-            .input('Metal', sql.VarChar(10), 'XAG')
-            .input('Price', sql.Decimal(18, 4), price)
-            .input('Timestamp', sql.DateTime2, timestamp)
-            .query(`
-                INSERT INTO MetalPrices (Metal, Price, Timestamp, Source)
-                VALUES (@Metal, @Price, @Timestamp, 'MoneyMetals')
-            `);
-
-        console.log(`✅ Silver price scraped from MoneyMetals: $${price}`);
-        return { price, timestamp, source: 'MoneyMetals' };
-
-    } catch (error) {
-        console.error('Error scraping MoneyMetals:', error.message);
-        throw error;
     }
+
+    throw new Error(`Failed to scrape MoneyMetals on both HTTP and HTTPS. Last error: ${lastError?.message}`);
 }
 
 // ============================================
 // Routes
 // ============================================
 
-// Dashboard
+// Main Dashboard
 app.get('/', async (req, res) => {
     try {
         const pool = await getPool();
@@ -155,7 +170,7 @@ app.get('/', async (req, res) => {
                 </div>
 
                 <div class="card">
-                    <h2>Silver Price - Last 3 Days</h2>
+                    <h2>Silver Price Trend - Last 3 Days</h2>
                     <canvas id="silverChart"></canvas>
                 </div>
             </div>
@@ -166,7 +181,7 @@ app.get('/', async (req, res) => {
                     data: {
                         labels: ${JSON.stringify(labels)},
                         datasets: [{
-                            label: 'Silver Price',
+                            label: 'Silver (USD)',
                             data: ${JSON.stringify(prices)},
                             borderColor: '#64748b',
                             backgroundColor: 'rgba(100, 116, 139, 0.1)',
@@ -187,7 +202,7 @@ app.get('/', async (req, res) => {
     }
 });
 
-// Manually update silver price by scraping MoneyMetals
+// Update silver price (tries both HTTP and HTTPS)
 app.get('/update-silver', async (req, res) => {
     try {
         const result = await fetchSilverPriceFromMoneyMetals();
@@ -212,7 +227,7 @@ app.get('/silver-price', async (req, res) => {
     }
 });
 
-// Test DB
+// Test database connection
 app.get('/test-db', async (req, res) => {
     try {
         const pool = await getPool();
@@ -223,12 +238,18 @@ app.get('/test-db', async (req, res) => {
     }
 });
 
-// Start server
+// ============================================
+// Start Server
+// ============================================
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
 });
 
+// Graceful shutdown
 process.on('SIGINT', async () => {
-    if (poolPromise) await (await poolPromise).close();
+    if (poolPromise) {
+        const pool = await poolPromise;
+        await pool.close();
+    }
     process.exit(0);
 });
