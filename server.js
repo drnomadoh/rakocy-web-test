@@ -33,38 +33,34 @@ async function getPool() {
 }
 
 // ============================================
-// Fetch Silver Price from Massive.com (REST)
+// Fetch Silver Price from Twelve Data
 // ============================================
 async function fetchSilverPriceFromPolygon() {
-    if (!POLYGON_API_KEY) {
-        throw new Error('POLYGON_API_KEY environment variable is not set');
+    const apiKey = process.env.TWELVE_DATA_API_KEY;
+
+    if (!apiKey) {
+        throw new Error('TWELVE_DATA_API_KEY environment variable is not set');
     }
 
     try {
-        const to = new Date();
-        const from = new Date();
-        from.setDate(from.getDate() - 30); // Increased to 30 days
-
-        const fromStr = from.toISOString().split('T')[0];
-        const toStr = to.toISOString().split('T')[0];
-
-        const url = `https://api.massive.com/v2/aggs/ticker/X:XAGUSD/range/1/day/${fromStr}/${toStr}?apiKey=${POLYGON_API_KEY}`;
+        const url = `https://api.twelvedata.com/time_series?symbol=XAG/USD&interval=1day&outputsize=10&apikey=${apiKey}`;
 
         const response = await axios.get(url, {
-            timeout: 60000
+            timeout: 30000
         });
 
-        console.log('Massive API Response:', JSON.stringify(response.data, null, 2));
-
-        if (!response.data.results || response.data.results.length === 0) {
-            throw new Error(
-                `No data returned from Massive API. Status: ${response.data.status || 'Unknown'}`
-            );
+        if (response.data.status === 'error') {
+            throw new Error(response.data.message || 'Error from Twelve Data');
         }
 
-        const latestBar = response.data.results[response.data.results.length - 1];
-        const price = latestBar.c;
-        const timestamp = new Date(latestBar.t);
+        if (!response.data.values || response.data.values.length === 0) {
+            throw new Error('No data returned from Twelve Data');
+        }
+
+        // Get the most recent data point (first item in the array)
+        const latest = response.data.values[0];
+        const price = parseFloat(latest.close);
+        const timestamp = new Date(latest.datetime);
 
         const pool = await getPool();
         await pool.request()
@@ -73,14 +69,14 @@ async function fetchSilverPriceFromPolygon() {
             .input('Timestamp', sql.DateTime2, timestamp)
             .query(`
                 INSERT INTO MetalPrices (Metal, Price, Timestamp, Source)
-                VALUES (@Metal, @Price, @Timestamp, 'Massive')
+                VALUES (@Metal, @Price, @Timestamp, 'Twelve Data')
             `);
 
-        console.log(`✅ Silver price saved from Massive: $${price}`);
-        return { price, timestamp, source: 'Massive' };
+        console.log(`✅ Silver price saved from Twelve Data: $${price}`);
+        return { price, timestamp, source: 'Twelve Data' };
 
     } catch (error) {
-        console.error('Error fetching from Massive:', error.message);
+        console.error('Error fetching from Twelve Data:', error.message);
         throw error;
     }
 }
