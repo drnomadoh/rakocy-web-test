@@ -7,7 +7,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ============================================
-// Azure SQL Configuration
+// Azure SQL Configuration (from Environment Variables)
 // ============================================
 const server   = process.env.DB_SERVER;
 const database = process.env.DB_NAME;
@@ -44,7 +44,7 @@ async function getPool() {
         poolPromise = new sql.ConnectionPool(config)
             .connect()
             .then(pool => {
-                console.log('✅ Connected to Azure SQL via Private Endpoint');
+                console.log('✅ Connected to Azure SQL (via hostname)');
                 return pool;
             })
             .catch(err => {
@@ -60,14 +60,15 @@ async function getPool() {
 // Routes
 // ============================================
 
+// Health check
 app.get('/', (req, res) => {
     res.json({
         status: 'ok',
-        message: 'Node.js app running on Azure App Service',
-        privateConnection: 'Using Private Endpoint (if VNet Integration is enabled)'
+        message: 'Node.js app running on Azure App Service'
     });
 });
 
+// Normal test route (uses hostname + Private DNS)
 app.get('/test-db', async (req, res) => {
     try {
         const pool = await getPool();
@@ -75,7 +76,7 @@ app.get('/test-db', async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Successfully connected to Azure SQL via Private Endpoint',
+            message: 'Connected using hostname (should use Private DNS)',
             data: result.recordset[0]
         });
     } catch (err) {
@@ -88,13 +89,47 @@ app.get('/test-db', async (req, res) => {
     }
 });
 
-app.get('/users', async (req, res) => {
+// ============================================
+// TEST ROUTE: Direct connection using Private IP
+// Use this to test if network path works
+// ============================================
+app.get('/test-db-direct', async (req, res) => {
+    const directConfig = {
+        server: '10.0.2.50',           // Private IP from DNS record
+        database: process.env.DB_NAME,
+        user: process.env.DB_USER,
+        password: process.env.DB_PASSWORD,
+        options: {
+            encrypt: true,
+            trustServerCertificate: false,
+            enableArithAbort: true
+        },
+        pool: {
+            max: 5,
+            min: 0,
+            idleTimeoutMillis: 30000
+        }
+    };
+
     try {
-        const pool = await getPool();
-        const result = await pool.request().query('SELECT TOP 10 * FROM Users');
-        res.json({ success: true, count: result.recordset.length, data: result.recordset });
+        const directPool = new sql.ConnectionPool(directConfig);
+        await directPool.connect();
+
+        const result = await directPool.request().query('SELECT 1 AS test, GETDATE() AS currentTime');
+        await directPool.close();
+
+        res.json({
+            success: true,
+            message: 'Successfully connected using PRIVATE IP directly (10.0.2.50)',
+            data: result.recordset[0]
+        });
     } catch (err) {
-        res.status(500).json({ success: false, message: 'Error fetching data', error: err.message });
+        console.error('Direct IP connection error:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to connect using private IP',
+            error: err.message
+        });
     }
 });
 
@@ -105,7 +140,9 @@ app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
 });
 
+// Graceful shutdown
 process.on('SIGINT', async () => {
+    console.log('Shutting down...');
     if (poolPromise) {
         const pool = await poolPromise;
         await pool.close();
