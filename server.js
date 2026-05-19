@@ -33,7 +33,7 @@ async function getPool() {
 }
 
 // ============================================
-// Fetch and save Silver price from Polygon.io
+// Fetch Silver Price from Massive.com (REST)
 // ============================================
 async function fetchSilverPriceFromPolygon() {
     if (!POLYGON_API_KEY) {
@@ -43,14 +43,22 @@ async function fetchSilverPriceFromPolygon() {
     try {
         const to = new Date();
         const from = new Date();
-        from.setDate(from.getDate() - 7);
+        from.setDate(from.getDate() - 5);
 
-        const url = `https://api.polygon.io/v2/aggs/ticker/X:XAGUSD/range/1/day/${from.toISOString().split('T')[0]}/${to.toISOString().split('T')[0]}?apiKey=${POLYGON_API_KEY}`;
+        const fromStr = from.toISOString().split('T')[0];
+        const toStr = to.toISOString().split('T')[0];
 
-        const response = await axios.get(url);
+        const url = `https://api.massive.com/v2/aggs/ticker/X:XAGUSD/range/1/day/${fromStr}/${toStr}?apiKey=${POLYGON_API_KEY}`;
+
+        const response = await axios.get(url, {
+            timeout: 60000, // 60 seconds timeout
+            headers: {
+                'User-Agent': 'axios/1.6.0'
+            }
+        });
 
         if (!response.data.results || response.data.results.length === 0) {
-            throw new Error('No data returned from Polygon.io');
+            throw new Error('No data returned from Massive API');
         }
 
         const latestBar = response.data.results[response.data.results.length - 1];
@@ -64,14 +72,14 @@ async function fetchSilverPriceFromPolygon() {
             .input('Timestamp', sql.DateTime2, timestamp)
             .query(`
                 INSERT INTO MetalPrices (Metal, Price, Timestamp, Source)
-                VALUES (@Metal, @Price, @Timestamp, 'Polygon.io')
+                VALUES (@Metal, @Price, @Timestamp, 'Massive')
             `);
 
-        console.log(`✅ Silver price saved from Polygon.io: $${price}`);
-        return { price, timestamp, source: 'Polygon.io' };
+        console.log(`✅ Silver price saved from Massive: $${price}`);
+        return { price, timestamp, source: 'Massive' };
 
     } catch (error) {
-        console.error('Error fetching from Polygon.io:', error.message);
+        console.error('Error fetching from Massive:', error.message);
         throw error;
     }
 }
@@ -258,7 +266,7 @@ app.get('/', async (req, res) => {
 app.get('/update-silver', async (req, res) => {
     try {
         const result = await fetchSilverPriceFromPolygon();
-        res.json({ success: true, message: 'Silver price updated from Polygon.io', data: result });
+        res.json({ success: true, message: 'Silver price updated from Massive', data: result });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
