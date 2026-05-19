@@ -33,17 +33,17 @@ async function getPool() {
 }
 
 // ============================================
-// Fetch Silver Price from Polygon.io and save to DB
+// Fetch and save Silver price from Polygon.io
 // ============================================
 async function fetchSilverPriceFromPolygon() {
     if (!POLYGON_API_KEY) {
-        throw new Error('POLYGON_API_KEY is not set');
+        throw new Error('POLYGON_API_KEY environment variable is not set');
     }
 
     try {
         const to = new Date();
         const from = new Date();
-        from.setDate(from.getDate() - 7); // Get last 7 days for context
+        from.setDate(from.getDate() - 7);
 
         const url = `https://api.polygon.io/v2/aggs/ticker/X:XAGUSD/range/1/day/${from.toISOString().split('T')[0]}/${to.toISOString().split('T')[0]}?apiKey=${POLYGON_API_KEY}`;
 
@@ -53,9 +53,8 @@ async function fetchSilverPriceFromPolygon() {
             throw new Error('No data returned from Polygon.io');
         }
 
-        // Get the most recent daily bar
         const latestBar = response.data.results[response.data.results.length - 1];
-        const price = latestBar.c; // Close price
+        const price = latestBar.c;
         const timestamp = new Date(latestBar.t);
 
         const pool = await getPool();
@@ -81,12 +80,11 @@ async function fetchSilverPriceFromPolygon() {
 // Routes
 // ============================================
 
-// Dashboard with time range support
+// Main Dashboard
 app.get('/', async (req, res) => {
     try {
-        const range = req.query.range || '3d'; // default to 3 days
+        const range = req.query.range || '3d';
         let days = 3;
-
         if (range === '7d') days = 7;
         if (range === '30d') days = 30;
         if (range === '3m') days = 90;
@@ -137,33 +135,35 @@ app.get('/', async (req, res) => {
             <title>Silver Price Dashboard</title>
             <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
-                body { font-family: system-ui, sans-serif; background: #f8fafc; margin: 0; padding: 40px 20px; }
+                body { font-family: system-ui, sans-serif; background: #f8fafc; margin: 0; padding: 40px 20px; color: #1e2937; }
                 .container { max-width: 920px; margin: 0 auto; }
-                .header { display: flex; align-items: center; gap: 16px; margin-bottom: 32px; }
+                .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px; }
                 .silver-icon { width: 52px; height: 52px; }
                 .card { background: white; border-radius: 16px; padding: 28px; box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1); margin-bottom: 24px; }
                 .price { font-size: 48px; font-weight: 700; color: #0f172a; margin: 12px 0; }
                 .meta { color: #64748b; font-size: 15px; }
-                .toggle-buttons { margin-bottom: 16px; }
-                .toggle-buttons a { 
-                    padding: 8px 16px; margin-right: 8px; text-decoration: none; 
-                    background: #e2e8f0; color: #334155; border-radius: 6px; font-size: 14px;
-                }
+                .toggle-buttons a { padding: 8px 16px; margin-right: 8px; text-decoration: none; background: #e2e8f0; color: #334155; border-radius: 6px; font-size: 14px; }
                 .toggle-buttons a.active { background: #64748b; color: white; }
                 table { width: 100%; border-collapse: collapse; margin-top: 16px; }
                 th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
                 th { background: #f1f5f9; }
+                .update-btn { background: #0f172a; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-size: 14px; cursor: pointer; }
+                .update-btn:hover { background: #1e2937; }
+                .update-btn:disabled { background: #94a3b8; cursor: not-allowed; }
             </style>
         </head>
         <body>
             <div class="container">
                 <div class="header">
-                    <svg class="silver-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="12" cy="12" r="10" stroke="#64748b" stroke-width="2"/>
-                        <circle cx="12" cy="12" r="6" fill="#94a3b8"/>
-                        <text x="12" y="16" text-anchor="middle" fill="#1e2937" font-size="8" font-weight="bold">Ag</text>
-                    </svg>
-                    <h1>Silver Price Dashboard</h1>
+                    <div style="display: flex; align-items: center; gap: 16px;">
+                        <svg class="silver-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="12" cy="12" r="10" stroke="#64748b" stroke-width="2"/>
+                            <circle cx="12" cy="12" r="6" fill="#94a3b8"/>
+                            <text x="12" y="16" text-anchor="middle" fill="#1e2937" font-size="8" font-weight="bold">Ag</text>
+                        </svg>
+                        <h1>Silver Price Dashboard</h1>
+                    </div>
+                    <button id="updateBtn" class="update-btn" onclick="updateSilverPrice()">Update Now</button>
                 </div>
 
                 <div class="card">
@@ -203,6 +203,30 @@ app.get('/', async (req, res) => {
             </div>
 
             <script>
+                async function updateSilverPrice() {
+                    const btn = document.getElementById('updateBtn');
+                    btn.disabled = true;
+                    btn.textContent = 'Updating...';
+
+                    try {
+                        const response = await fetch('/update-silver');
+                        const result = await response.json();
+
+                        if (result.success) {
+                            btn.textContent = 'Updated!';
+                            setTimeout(() => window.location.reload(), 800);
+                        } else {
+                            alert('Update failed: ' + result.error);
+                            btn.textContent = 'Update Now';
+                            btn.disabled = false;
+                        }
+                    } catch (err) {
+                        alert('Error updating price');
+                        btn.textContent = 'Update Now';
+                        btn.disabled = false;
+                    }
+                }
+
                 new Chart(document.getElementById('silverChart'), {
                     type: 'line',
                     data: {
@@ -230,7 +254,7 @@ app.get('/', async (req, res) => {
     }
 });
 
-// Manually update silver price from Polygon.io
+// Manually update silver price
 app.get('/update-silver', async (req, res) => {
     try {
         const result = await fetchSilverPriceFromPolygon();
@@ -240,7 +264,7 @@ app.get('/update-silver', async (req, res) => {
     }
 });
 
-// Get latest silver price
+// Get latest silver price (JSON)
 app.get('/silver-price', async (req, res) => {
     try {
         const pool = await getPool();
@@ -253,7 +277,7 @@ app.get('/silver-price', async (req, res) => {
     }
 });
 
-// Test DB
+// Test database
 app.get('/test-db', async (req, res) => {
     try {
         const pool = await getPool();
@@ -264,12 +288,18 @@ app.get('/test-db', async (req, res) => {
     }
 });
 
-// Start server
+// ============================================
+// Start Server
+// ============================================
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
 });
 
+// Graceful shutdown
 process.on('SIGINT', async () => {
-    if (poolPromise) await (await poolPromise).close();
+    if (poolPromise) {
+        const pool = await poolPromise;
+        await pool.close();
+    }
     process.exit(0);
 });
