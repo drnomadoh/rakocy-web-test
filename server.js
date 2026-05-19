@@ -7,7 +7,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ============================================
-// Azure SQL Configuration (from Environment Variables)
+// Azure SQL Configuration
 // ============================================
 const server   = process.env.DB_SERVER;
 const database = process.env.DB_NAME;
@@ -15,8 +15,7 @@ const user     = process.env.DB_USER;
 const password = process.env.DB_PASSWORD;
 
 if (!server || !database || !user || !password) {
-    console.error("❌ FATAL ERROR: Missing database environment variables!");
-    console.error("Required: DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD");
+    console.error("❌ Missing required database environment variables!");
     process.exit(1);
 }
 
@@ -44,7 +43,7 @@ async function getPool() {
         poolPromise = new sql.ConnectionPool(config)
             .connect()
             .then(pool => {
-                console.log('✅ Connected to Azure SQL (via hostname)');
+                console.log('✅ Connected to Azure SQL via Private Endpoint');
                 return pool;
             })
             .catch(err => {
@@ -57,6 +56,16 @@ async function getPool() {
 }
 
 // ============================================
+// Middleware - Enforce HTTPS in production
+// ============================================
+app.use((req, res, next) => {
+    if (req.headers['x-forwarded-proto'] !== 'https' && process.env.NODE_ENV === 'production') {
+        return res.redirect(`https://${req.headers.host}${req.url}`);
+    }
+    next();
+});
+
+// ============================================
 // Routes
 // ============================================
 
@@ -64,11 +73,11 @@ async function getPool() {
 app.get('/', (req, res) => {
     res.json({
         status: 'ok',
-        message: 'Node.js app running on Azure App Service'
+        message: 'Node.js API running on Azure App Service (Private Endpoint)'
     });
 });
 
-// Normal test route (uses hostname + Private DNS)
+// Test database connection
 app.get('/test-db', async (req, res) => {
     try {
         const pool = await getPool();
@@ -76,58 +85,41 @@ app.get('/test-db', async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Connected using hostname (should use Private DNS)',
+            message: 'Connected using hostname via Private DNS',
             data: result.recordset[0]
         });
     } catch (err) {
         console.error('Database error:', err);
         res.status(500).json({
             success: false,
-            message: 'Failed to connect to database',
+            message: 'Database connection failed',
             error: err.message
         });
     }
 });
 
-// ============================================
-// TEST ROUTE: Direct connection using Private IP
-// Use this to test if network path works
-// ============================================
-app.get('/test-db-direct', async (req, res) => {
-    const directConfig = {
-        server: '10.0.2.50',           // Private IP from DNS record
-        database: process.env.DB_NAME,
-        user: process.env.DB_USER,
-        password: process.env.DB_PASSWORD,
-        options: {
-            encrypt: true,
-            trustServerCertificate: false,
-            enableArithAbort: true
-        },
-        pool: {
-            max: 5,
-            min: 0,
-            idleTimeoutMillis: 30000
-        }
-    };
-
+// Get Silver Pricing data
+app.get('/silver-pricing', async (req, res) => {
     try {
-        const directPool = new sql.ConnectionPool(directConfig);
-        await directPool.connect();
-
-        const result = await directPool.request().query('SELECT 1 AS test, GETDATE() AS currentTime');
-        await directPool.close();
+        const pool = await getPool();
+        
+        // TODO: Update this query based on your actual table name and columns
+        const result = await pool.request().query(`
+            SELECT TOP 50 * 
+            FROM SilverPricing 
+            ORDER BY CreatedDate DESC
+        `);
 
         res.json({
             success: true,
-            message: 'Successfully connected using PRIVATE IP directly (10.0.2.50)',
-            data: result.recordset[0]
+            count: result.recordset.length,
+            data: result.recordset
         });
     } catch (err) {
-        console.error('Direct IP connection error:', err);
+        console.error('Error fetching silver pricing:', err);
         res.status(500).json({
             success: false,
-            message: 'Failed to connect using private IP',
+            message: 'Failed to fetch silver pricing data',
             error: err.message
         });
     }
@@ -142,7 +134,6 @@ app.listen(PORT, () => {
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
-    console.log('Shutting down...');
     if (poolPromise) {
         const pool = await poolPromise;
         await pool.close();
