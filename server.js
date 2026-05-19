@@ -9,6 +9,9 @@ const PORT = process.env.PORT || 3000;
 
 const POLYGON_API_KEY = process.env.POLYGON_API_KEY;
 
+// Middleware for form data
+app.use(express.urlencoded({ extended: true }));
+
 // ============================================
 // Azure SQL Configuration
 // ============================================
@@ -33,34 +36,34 @@ async function getPool() {
 }
 
 // ============================================
-// Fetch Silver Price from Twelve Data
+// Fetch Silver Price from Massive/Polygon (kept for future use)
 // ============================================
 async function fetchSilverPriceFromPolygon() {
-    const apiKey = process.env.TWELVE_DATA_API_KEY;
-
-    if (!apiKey) {
-        throw new Error('TWELVE_DATA_API_KEY environment variable is not set');
+    if (!POLYGON_API_KEY) {
+        throw new Error('POLYGON_API_KEY environment variable is not set');
     }
 
     try {
-        const url = `https://api.twelvedata.com/time_series?symbol=XAG/USD&interval=1day&outputsize=10&apikey=${apiKey}`;
+        const to = new Date();
+        const from = new Date();
+        from.setDate(from.getDate() - 10);
+
+        const fromStr = from.toISOString().split('T')[0];
+        const toStr = to.toISOString().split('T')[0];
+
+        const url = `https://api.massive.com/v2/aggs/ticker/X:XAGUSD/range/1/day/${fromStr}/${toStr}?apiKey=${POLYGON_API_KEY}`;
 
         const response = await axios.get(url, {
-            timeout: 30000
+            timeout: 60000
         });
 
-        if (response.data.status === 'error') {
-            throw new Error(response.data.message || 'Error from Twelve Data');
+        if (!response.data.results || response.data.results.length === 0) {
+            throw new Error('No data returned from Massive API');
         }
 
-        if (!response.data.values || response.data.values.length === 0) {
-            throw new Error('No data returned from Twelve Data');
-        }
-
-        // Get the most recent data point (first item in the array)
-        const latest = response.data.values[0];
-        const price = parseFloat(latest.close);
-        const timestamp = new Date(latest.datetime);
+        const latestBar = response.data.results[response.data.results.length - 1];
+        const price = latestBar.c;
+        const timestamp = new Date(latestBar.t);
 
         const pool = await getPool();
         await pool.request()
@@ -69,14 +72,13 @@ async function fetchSilverPriceFromPolygon() {
             .input('Timestamp', sql.DateTime2, timestamp)
             .query(`
                 INSERT INTO MetalPrices (Metal, Price, Timestamp, Source)
-                VALUES (@Metal, @Price, @Timestamp, 'Twelve Data')
+                VALUES (@Metal, @Price, @Timestamp, 'Massive')
             `);
 
-        console.log(`✅ Silver price saved from Twelve Data: $${price}`);
-        return { price, timestamp, source: 'Twelve Data' };
+        return { price, timestamp, source: 'Massive' };
 
     } catch (error) {
-        console.error('Error fetching from Twelve Data:', error.message);
+        console.error('Error fetching from Massive:', error.message);
         throw error;
     }
 }
@@ -142,7 +144,7 @@ app.get('/', async (req, res) => {
             <style>
                 body { font-family: system-ui, sans-serif; background: #f8fafc; margin: 0; padding: 40px 20px; color: #1e2937; }
                 .container { max-width: 920px; margin: 0 auto; }
-                .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px; }
+                .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px; flex-wrap: wrap; gap: 12px; }
                 .silver-icon { width: 52px; height: 52px; }
                 .card { background: white; border-radius: 16px; padding: 28px; box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1); margin-bottom: 24px; }
                 .price { font-size: 48px; font-weight: 700; color: #0f172a; margin: 12px 0; }
@@ -155,10 +157,16 @@ app.get('/', async (req, res) => {
                 .update-btn { background: #0f172a; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-size: 14px; cursor: pointer; }
                 .update-btn:hover { background: #1e2937; }
                 .update-btn:disabled { background: #94a3b8; cursor: not-allowed; }
+                .manual-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+                .manual-form input { padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; }
+                .manual-form button { background: #166534; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; }
+                .manual-form button:hover { background: #14532d; }
+                .note { font-size: 13px; color: #64748b; margin-top: 8px; }
             </style>
         </head>
         <body>
             <div class="container">
+                <!-- Header -->
                 <div class="header">
                     <div style="display: flex; align-items: center; gap: 16px;">
                         <svg class="silver-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -168,9 +176,13 @@ app.get('/', async (req, res) => {
                         </svg>
                         <h1>Silver Price Dashboard</h1>
                     </div>
-                    <button id="updateBtn" class="update-btn" onclick="updateSilverPrice()">Update Now</button>
+                    <div>
+                        <button id="updateBtn" class="update-btn" disabled title="Requires paid API tier">Update Now</button>
+                        <div class="note">Currently unavailable (paid API tier required)</div>
+                    </div>
                 </div>
 
+                <!-- Current Price -->
                 <div class="card">
                     <h2>Current Silver Price (USD per oz)</h2>
                     <div class="price">$${latest ? latest.Price : '—'}</div>
@@ -180,6 +192,7 @@ app.get('/', async (req, res) => {
                     </div>
                 </div>
 
+                <!-- Chart -->
                 <div class="card">
                     <h2>Silver Price Trend</h2>
                     <div class="toggle-buttons">
@@ -191,6 +204,7 @@ app.get('/', async (req, res) => {
                     <canvas id="silverChart"></canvas>
                 </div>
 
+                <!-- Data Table -->
                 <div class="card">
                     <h2>Price History</h2>
                     <table>
@@ -205,33 +219,26 @@ app.get('/', async (req, res) => {
                         </tbody>
                     </table>
                 </div>
+
+                <!-- Manual Entry -->
+                <div class="card">
+                    <h2>Manual Entry</h2>
+                    <form action="/manual-update" method="POST" class="manual-form">
+                        <div>
+                            <label>Price (USD)</label><br>
+                            <input type="number" step="0.01" name="price" value="76.89" required>
+                        </div>
+                        <div>
+                            <label>Timestamp</label><br>
+                            <input type="datetime-local" name="timestamp" value="${new Date().toISOString().slice(0,16)}" required>
+                        </div>
+                        <button type="submit">Add Manual Entry</button>
+                    </form>
+                    <div class="note">This will be saved with source = "Manual Entry"</div>
+                </div>
             </div>
 
             <script>
-                async function updateSilverPrice() {
-                    const btn = document.getElementById('updateBtn');
-                    btn.disabled = true;
-                    btn.textContent = 'Updating...';
-
-                    try {
-                        const response = await fetch('/update-silver');
-                        const result = await response.json();
-
-                        if (result.success) {
-                            btn.textContent = 'Updated!';
-                            setTimeout(() => window.location.reload(), 800);
-                        } else {
-                            alert('Update failed: ' + result.error);
-                            btn.textContent = 'Update Now';
-                            btn.disabled = false;
-                        }
-                    } catch (err) {
-                        alert('Error updating price');
-                        btn.textContent = 'Update Now';
-                        btn.disabled = false;
-                    }
-                }
-
                 new Chart(document.getElementById('silverChart'), {
                     type: 'line',
                     data: {
@@ -259,17 +266,38 @@ app.get('/', async (req, res) => {
     }
 });
 
-// Manually update silver price
+// Update silver price (kept for future paid API use)
 app.get('/update-silver', async (req, res) => {
     try {
         const result = await fetchSilverPriceFromPolygon();
-        res.json({ success: true, message: 'Silver price updated from Massive', data: result });
+        res.json({ success: true, message: 'Silver price updated', data: result });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Get latest silver price (JSON)
+// Manual price entry
+app.post('/manual-update', async (req, res) => {
+    try {
+        const { price, timestamp } = req.body;
+        const pool = await getPool();
+
+        await pool.request()
+            .input('Metal', sql.VarChar(10), 'XAG')
+            .input('Price', sql.Decimal(18, 4), parseFloat(price))
+            .input('Timestamp', sql.DateTime2, new Date(timestamp))
+            .query(`
+                INSERT INTO MetalPrices (Metal, Price, Timestamp, Source)
+                VALUES (@Metal, @Price, @Timestamp, 'Manual Entry')
+            `);
+
+        res.redirect('/');
+    } catch (err) {
+        res.status(500).send('Failed to add manual entry');
+    }
+});
+
+// Get latest silver price
 app.get('/silver-price', async (req, res) => {
     try {
         const pool = await getPool();
@@ -282,7 +310,7 @@ app.get('/silver-price', async (req, res) => {
     }
 });
 
-// Test database
+// Test DB
 app.get('/test-db', async (req, res) => {
     try {
         const pool = await getPool();
