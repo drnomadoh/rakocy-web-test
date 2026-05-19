@@ -33,12 +33,12 @@ async function getPool() {
 }
 
 // ============================================
-// Scrape Silver Price from MoneyMetals (tries both HTTPS and HTTP)
+// Scrape Silver Price from MoneyMetals (HTTPS first, then HTTP)
 // ============================================
 async function fetchSilverPriceFromMoneyMetals() {
     const urlsToTry = [
-        'https://www.moneymetals.com/silver-price',   // TCP 443
-        'http://www.moneymetals.com/silver-price'     // TCP 80
+        'https://www.moneymetals.com/silver-price',
+        'http://www.moneymetals.com/silver-price'
     ];
 
     let lastError = null;
@@ -56,20 +56,16 @@ async function fetchSilverPriceFromMoneyMetals() {
 
             const $ = cheerio.load(data);
 
-            // Extract price (adjust selector if MoneyMetals changes layout)
             let priceText = $('[class*="price"]').first().text().trim() ||
                             $('h1, h2, h3').filter((i, el) => $(el).text().includes('$')).first().text().trim() ||
                             $('body').text().match(/\$[\d,.]+/)?.[0] || '';
 
             const priceMatch = priceText.match(/[\d,.]+/);
-            if (!priceMatch) {
-                throw new Error(`Could not extract price from ${url}`);
-            }
+            if (!priceMatch) throw new Error(`Could not extract price from ${url}`);
 
             const price = parseFloat(priceMatch[0].replace(',', ''));
             const timestamp = new Date();
 
-            // Save to database
             const pool = await getPool();
             await pool.request()
                 .input('Metal', sql.VarChar(10), 'XAG')
@@ -101,7 +97,7 @@ async function fetchSilverPriceFromMoneyMetals() {
 // Routes
 // ============================================
 
-// Main Dashboard
+// Main Dashboard (Chart + Table)
 app.get('/', async (req, res) => {
     try {
         const pool = await getPool();
@@ -131,6 +127,15 @@ app.get('/', async (req, res) => {
         );
         const prices = chartData.map(row => row.Price);
 
+        // Build table rows
+        let tableRows = '';
+        chartData.forEach(row => {
+            const formattedTime = new Date(row.Timestamp).toLocaleString('en-US', {
+                weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+            });
+            tableRows += `<tr><td>${formattedTime}</td><td style="text-align:right;">$${row.Price}</td></tr>`;
+        });
+
         const html = `
         <!DOCTYPE html>
         <html lang="en">
@@ -140,13 +145,16 @@ app.get('/', async (req, res) => {
             <title>Silver Price Dashboard</title>
             <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
-                body { font-family: system-ui, sans-serif; background: #f8fafc; margin: 0; padding: 40px 20px; }
+                body { font-family: system-ui, sans-serif; background: #f8fafc; margin: 0; padding: 40px 20px; color: #1e2937; }
                 .container { max-width: 920px; margin: 0 auto; }
                 .header { display: flex; align-items: center; gap: 16px; margin-bottom: 32px; }
                 .silver-icon { width: 52px; height: 52px; }
                 .card { background: white; border-radius: 16px; padding: 28px; box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1); margin-bottom: 24px; }
                 .price { font-size: 48px; font-weight: 700; color: #0f172a; margin: 12px 0; }
                 .meta { color: #64748b; font-size: 15px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+                th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+                th { background: #f1f5f9; font-weight: 600; }
             </style>
         </head>
         <body>
@@ -173,6 +181,21 @@ app.get('/', async (req, res) => {
                     <h2>Silver Price Trend - Last 3 Days</h2>
                     <canvas id="silverChart"></canvas>
                 </div>
+
+                <div class="card">
+                    <h2>Price History (Last 3 Days)</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date / Time (Eastern)</th>
+                                <th style="text-align: right;">Price (USD)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${tableRows}
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             <script>
@@ -198,11 +221,12 @@ app.get('/', async (req, res) => {
 
         res.send(html);
     } catch (err) {
+        console.error('Dashboard error:', err);
         res.status(500).send('Error loading dashboard');
     }
 });
 
-// Update silver price (tries both HTTP and HTTPS)
+// Update silver price (tries HTTPS then HTTP)
 app.get('/update-silver', async (req, res) => {
     try {
         const result = await fetchSilverPriceFromMoneyMetals();
@@ -212,7 +236,7 @@ app.get('/update-silver', async (req, res) => {
     }
 });
 
-// Get latest silver price
+// Get latest silver price (JSON)
 app.get('/silver-price', async (req, res) => {
     try {
         const pool = await getPool();
