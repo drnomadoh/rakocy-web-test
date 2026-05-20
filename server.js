@@ -31,10 +31,9 @@ async function getPool() {
     return poolPromise;
 }
 
-// Fetch function kept for future use
+// Fetch function (kept for future paid API)
 async function fetchSilverPriceFromPolygon() {
     if (!POLYGON_API_KEY) throw new Error('POLYGON_API_KEY is not set');
-
     try {
         const to = new Date();
         const from = new Date();
@@ -67,7 +66,7 @@ async function fetchSilverPriceFromPolygon() {
 }
 
 // ============================================
-// Main Dashboard
+// Main Dashboard with Candlestick Chart
 // ============================================
 app.get('/', async (req, res) => {
     try {
@@ -86,7 +85,6 @@ app.get('/', async (req, res) => {
             ORDER BY Timestamp DESC
         `);
 
-        // Get all data points
         const rawResult = await pool.request()
             .input('Days', sql.Int, days)
             .query(`
@@ -100,7 +98,7 @@ app.get('/', async (req, res) => {
         const latest = latestResult.recordset[0];
         const rawData = rawResult.recordset;
 
-        // Group by day and calculate daily OHLC
+        // Group by day → daily OHLC
         const dailyMap = {};
         rawData.forEach(row => {
             const key = row.TradeDate.toISOString().split('T')[0];
@@ -121,10 +119,16 @@ app.get('/', async (req, res) => {
             d.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
         );
 
-        // Use Close price for the line chart
-        const closePrices = dailyOHLC.map(d => d.close);
+        // Data for candlestick chart (required format)
+        const candlestickData = dailyOHLC.map(d => ({
+            x: d.date.getTime(),
+            o: d.open,
+            h: d.high,
+            l: d.low,
+            c: d.close
+        }));
 
-        // Build OHLC table
+        // OHLC table rows
         let ohlcRows = '';
         dailyOHLC.forEach(d => {
             const dateLabel = d.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
@@ -146,6 +150,7 @@ app.get('/', async (req, res) => {
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Silver Price Dashboard</title>
             <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+            <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
             <style>
                 body { font-family: system-ui, sans-serif; background: #f8fafc; margin: 0; padding: 40px 20px; color: #1e2937; }
                 .container { max-width: 1000px; margin: 0 auto; }
@@ -227,25 +232,27 @@ app.get('/', async (req, res) => {
             </div>
 
             <script>
+                // Register financial plugin
+                Chart.register(ChartFinancial.CandlestickController, ChartFinancial.CandlestickElement);
+
                 new Chart(document.getElementById('silverChart'), {
-                    type: 'line',
+                    type: 'candlestick',
                     data: {
-                        labels: ${JSON.stringify(labels)},
                         datasets: [{
-                            label: 'Close Price',
-                            data: ${JSON.stringify(closePrices)},
-                            borderColor: '#64748b',
-                            backgroundColor: 'rgba(100, 116, 139, 0.1)',
-                            borderWidth: 3,
-                            tension: 0.3,
-                            fill: true
+                            label: 'Silver (OHLC)',
+                            data: ${JSON.stringify(candlestickData)}
                         }]
                     },
                     options: {
                         responsive: true,
                         plugins: { legend: { display: false } },
                         scales: {
-                            x: { ticks: { maxRotation: 45, minRotation: 0 } }
+                            x: {
+                                type: 'time',
+                                time: { unit: 'day' },
+                                ticks: { maxRotation: 45, minRotation: 0 }
+                            },
+                            y: { beginAtZero: false }
                         }
                     }
                 });
