@@ -11,9 +11,6 @@ const POLYGON_API_KEY = process.env.POLYGON_API_KEY;
 
 app.use(express.urlencoded({ extended: true }));
 
-// ============================================
-// Azure SQL Configuration
-// ============================================
 const config = {
     server: process.env.DB_SERVER,
     database: process.env.DB_NAME,
@@ -34,14 +31,10 @@ async function getPool() {
     return poolPromise;
 }
 
-// ============================================
-// Fetch function (kept for future paid API use)
-// ============================================
+// Fetch function kept for future use
 async function fetchSilverPriceFromPolygon() {
-    if (!POLYGON_API_KEY) {
-        throw new Error('POLYGON_API_KEY is not set');
-    }
-    // ... (same as before, kept for future use)
+    if (!POLYGON_API_KEY) throw new Error('POLYGON_API_KEY is not set');
+
     try {
         const to = new Date();
         const from = new Date();
@@ -52,11 +45,9 @@ async function fetchSilverPriceFromPolygon() {
         const url = `https://api.massive.com/v2/aggs/ticker/X:XAGUSD/range/1/day/${fromStr}/${toStr}?apiKey=${POLYGON_API_KEY}`;
         const response = await axios.get(url, { timeout: 60000 });
 
-        if (!response.data.results || response.data.results.length === 0) {
-            throw new Error('No data returned from Massive API');
-        }
+        if (!response.data.results?.length) throw new Error('No data from Massive');
 
-        const latestBar = response.data.results[response.data.results.length - 1];
+        const latestBar = response.data.results.at(-1);
         const price = latestBar.c;
         const timestamp = new Date(latestBar.t);
 
@@ -76,9 +67,8 @@ async function fetchSilverPriceFromPolygon() {
 }
 
 // ============================================
-// Routes
+// Main Dashboard
 // ============================================
-
 app.get('/', async (req, res) => {
     try {
         const range = req.query.range || '3d';
@@ -96,11 +86,11 @@ app.get('/', async (req, res) => {
             ORDER BY Timestamp DESC
         `);
 
-        // Get raw data
-        const rawDataResult = await pool.request()
+        // Get all data points
+        const rawResult = await pool.request()
             .input('Days', sql.Int, days)
             .query(`
-                SELECT CAST(Timestamp AS DATE) as TradeDate, Price, Timestamp
+                SELECT CAST(Timestamp AS DATE) as TradeDate, Price 
                 FROM MetalPrices 
                 WHERE Metal = 'XAG' 
                   AND Timestamp >= DATEADD(day, -@Days, GETDATE())
@@ -108,53 +98,44 @@ app.get('/', async (req, res) => {
             `);
 
         const latest = latestResult.recordset[0];
-        const rawData = rawDataResult.recordset;
+        const rawData = rawResult.recordset;
 
-        // Group by day and calculate OHLC
-        const dailyData = {};
+        // Group by day and calculate daily OHLC
+        const dailyMap = {};
         rawData.forEach(row => {
-            const dateKey = row.TradeDate.toISOString().split('T')[0];
-            if (!dailyData[dateKey]) {
-                dailyData[dateKey] = {
-                    open: row.Price,
-                    high: row.Price,
-                    low: row.Price,
-                    close: row.Price,
-                    date: row.TradeDate
-                };
+            const key = row.TradeDate.toISOString().split('T')[0];
+            if (!dailyMap[key]) {
+                dailyMap[key] = { open: row.Price, high: row.Price, low: row.Price, close: row.Price, date: row.TradeDate };
             } else {
-                dailyData[dateKey].high = Math.max(dailyData[dateKey].high, row.Price);
-                dailyData[dateKey].low = Math.min(dailyData[dateKey].low, row.Price);
-                dailyData[dateKey].close = row.Price;
+                dailyMap[key].high = Math.max(dailyMap[key].high, row.Price);
+                dailyMap[key].low = Math.min(dailyMap[key].low, row.Price);
+                dailyMap[key].close = row.Price;
             }
         });
 
-        const sortedDays = Object.keys(dailyData).sort();
-        const ohlcData = sortedDays.map(date => dailyData[date]);
+        const sortedDates = Object.keys(dailyMap).sort();
+        const dailyOHLC = sortedDates.map(date => dailyMap[date]);
 
-        // X-axis labels (date only, no time)
-        const labels = ohlcData.map(d => 
+        // X-axis labels (date only)
+        const labels = dailyOHLC.map(d => 
             d.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
         );
 
         // Use Close price for the line chart
-        const closePrices = ohlcData.map(d => d.close);
+        const closePrices = dailyOHLC.map(d => d.close);
 
-        // Build OHLC table rows
-        let ohlcTableRows = '';
-        ohlcData.forEach(d => {
-            const dateStr = d.date.toLocaleDateString('en-US', { 
-                weekday: 'short', month: 'short', day: 'numeric' 
-            });
-            ohlcTableRows += `
+        // Build OHLC table
+        let ohlcRows = '';
+        dailyOHLC.forEach(d => {
+            const dateLabel = d.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+            ohlcRows += `
                 <tr>
-                    <td>${dateStr}</td>
+                    <td>${dateLabel}</td>
                     <td style="text-align:right;">$${d.open.toFixed(2)}</td>
                     <td style="text-align:right;">$${d.high.toFixed(2)}</td>
                     <td style="text-align:right;">$${d.low.toFixed(2)}</td>
                     <td style="text-align:right;">$${d.close.toFixed(2)}</td>
-                </tr>
-            `;
+                </tr>`;
         });
 
         const html = `
@@ -178,7 +159,6 @@ app.get('/', async (req, res) => {
                 table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 14px; }
                 th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
                 th { background: #f1f5f9; font-weight: 600; }
-                .ohlc-header { background: #e0e7ff; }
             </style>
         </head>
         <body>
@@ -212,12 +192,11 @@ app.get('/', async (req, res) => {
                     <canvas id="silverChart"></canvas>
                 </div>
 
-                <!-- Daily OHLC Table -->
                 <div class="card">
                     <h2>Daily Price Summary (OHLC)</h2>
                     <table>
                         <thead>
-                            <tr class="ohlc-header">
+                            <tr style="background:#e0e7ff;">
                                 <th>Date</th>
                                 <th style="text-align:right;">Open</th>
                                 <th style="text-align:right;">High</th>
@@ -226,7 +205,7 @@ app.get('/', async (req, res) => {
                             </tr>
                         </thead>
                         <tbody>
-                            ${ohlcTableRows}
+                            ${ohlcRows}
                         </tbody>
                     </table>
                 </div>
@@ -242,7 +221,7 @@ app.get('/', async (req, res) => {
                             <label>Timestamp</label><br>
                             <input type="datetime-local" name="timestamp" value="${new Date().toISOString().slice(0,16)}" required>
                         </div>
-                        <button type="submit" style="background:#166534; color:white; border:none; padding:10px 18px; border-radius:6px; cursor:pointer;">Add Entry</button>
+                        <button type="submit" style="background:#166534;color:white;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;">Add Entry</button>
                     </form>
                 </div>
             </div>
@@ -253,7 +232,7 @@ app.get('/', async (req, res) => {
                     data: {
                         labels: ${JSON.stringify(labels)},
                         datasets: [{
-                            label: 'Close Price (USD)',
+                            label: 'Close Price',
                             data: ${JSON.stringify(closePrices)},
                             borderColor: '#64748b',
                             backgroundColor: 'rgba(100, 116, 139, 0.1)',
@@ -276,12 +255,12 @@ app.get('/', async (req, res) => {
 
         res.send(html);
     } catch (err) {
-        console.error('Dashboard error:', err);
+        console.error(err);
         res.status(500).send('Error loading dashboard');
     }
 });
 
-// Update silver price (kept for future)
+// Update silver price (future use)
 app.get('/update-silver', async (req, res) => {
     try {
         const result = await fetchSilverPriceFromPolygon();
@@ -308,7 +287,6 @@ app.post('/manual-update', async (req, res) => {
     }
 });
 
-// Other routes
 app.get('/silver-price', async (req, res) => {
     try {
         const pool = await getPool();
