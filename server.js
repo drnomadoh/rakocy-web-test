@@ -31,7 +31,6 @@ async function getPool() {
     return poolPromise;
 }
 
-// Fetch function (kept for future paid API)
 async function fetchSilverPriceFromPolygon() {
     if (!POLYGON_API_KEY) throw new Error('POLYGON_API_KEY is not set');
     try {
@@ -66,7 +65,7 @@ async function fetchSilverPriceFromPolygon() {
 }
 
 // ============================================
-// Main Dashboard with Candlestick Chart
+// Main Dashboard
 // ============================================
 app.get('/', async (req, res) => {
     try {
@@ -119,7 +118,7 @@ app.get('/', async (req, res) => {
             d.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
         );
 
-        // Data for candlestick chart (required format)
+        // Data for candlestick
         const candlestickData = dailyOHLC.map(d => ({
             x: d.date.getTime(),
             o: d.open,
@@ -128,7 +127,10 @@ app.get('/', async (req, res) => {
             c: d.close
         }));
 
-        // OHLC table rows
+        // Close prices for fallback line chart
+        const closePrices = dailyOHLC.map(d => d.close);
+
+        // OHLC table
         let ohlcRows = '';
         dailyOHLC.forEach(d => {
             const dateLabel = d.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
@@ -150,6 +152,7 @@ app.get('/', async (req, res) => {
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Silver Price Dashboard</title>
             <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+            <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
             <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
             <style>
                 body { font-family: system-ui, sans-serif; background: #f8fafc; margin: 0; padding: 40px 20px; color: #1e2937; }
@@ -232,15 +235,21 @@ app.get('/', async (req, res) => {
             </div>
 
             <script>
-                // Register financial plugin
-                Chart.register(ChartFinancial.CandlestickController, ChartFinancial.CandlestickElement);
+                // Try to use candlestick chart, fall back to line if plugin fails
+                const useCandlestick = typeof ChartFinancial !== 'undefined';
+
+                if (useCandlestick) {
+                    Chart.register(ChartFinancial.CandlestickController, ChartFinancial.CandlestickElement);
+                }
 
                 new Chart(document.getElementById('silverChart'), {
-                    type: 'candlestick',
+                    type: useCandlestick ? 'candlestick' : 'line',
                     data: {
                         datasets: [{
-                            label: 'Silver (OHLC)',
-                            data: ${JSON.stringify(candlestickData)}
+                            label: useCandlestick ? 'Silver (OHLC)' : 'Close Price',
+                            data: useCandlestick 
+                                ? ${JSON.stringify(candlestickData)}
+                                : ${JSON.stringify(closePrices.map((p, i) => ({ x: dailyOHLC[i].date.getTime(), y: p })))}
                         }]
                     },
                     options: {
@@ -256,6 +265,10 @@ app.get('/', async (req, res) => {
                         }
                     }
                 });
+
+                if (!useCandlestick) {
+                    console.warn('%c[Candlestick] Plugin not loaded. Falling back to line chart.', 'color: orange');
+                }
             </script>
         </body>
         </html>`;
