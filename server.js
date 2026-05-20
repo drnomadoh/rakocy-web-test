@@ -9,7 +9,6 @@ const PORT = process.env.PORT || 3000;
 
 const POLYGON_API_KEY = process.env.POLYGON_API_KEY;
 
-// Middleware for form data
 app.use(express.urlencoded({ extended: true }));
 
 // ============================================
@@ -53,9 +52,7 @@ async function fetchSilverPriceFromPolygon() {
 
         const url = `https://api.massive.com/v2/aggs/ticker/X:XAGUSD/range/1/day/${fromStr}/${toStr}?apiKey=${POLYGON_API_KEY}`;
 
-        const response = await axios.get(url, {
-            timeout: 60000
-        });
+        const response = await axios.get(url, { timeout: 60000 });
 
         if (!response.data.results || response.data.results.length === 0) {
             throw new Error('No data returned from Massive API');
@@ -87,7 +84,6 @@ async function fetchSilverPriceFromPolygon() {
 // Routes
 // ============================================
 
-// Main Dashboard
 app.get('/', async (req, res) => {
     try {
         const range = req.query.range || '3d';
@@ -118,10 +114,16 @@ app.get('/', async (req, res) => {
         const latest = latestResult.recordset[0];
         const chartData = chartResult.recordset;
 
+        // Dynamic x-axis labels based on range
+        let labelOptions = { month: 'short', day: 'numeric' };
+        if (range === '3d' || range === '7d') {
+            labelOptions = { month: 'short', day: 'numeric', hour: 'numeric' };
+        } else if (range === '3m') {
+            labelOptions = { month: 'short', year: 'numeric' };
+        }
+
         const labels = chartData.map(row =>
-            new Date(row.Timestamp).toLocaleString('en-US', {
-                month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
-            })
+            new Date(row.Timestamp).toLocaleString('en-US', labelOptions)
         );
         const prices = chartData.map(row => row.Price);
 
@@ -154,9 +156,6 @@ app.get('/', async (req, res) => {
                 table { width: 100%; border-collapse: collapse; margin-top: 16px; }
                 th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
                 th { background: #f1f5f9; }
-                .update-btn { background: #0f172a; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-size: 14px; cursor: pointer; }
-                .update-btn:hover { background: #1e2937; }
-                .update-btn:disabled { background: #94a3b8; cursor: not-allowed; }
                 .manual-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
                 .manual-form input { padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; }
                 .manual-form button { background: #166534; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; }
@@ -166,7 +165,6 @@ app.get('/', async (req, res) => {
         </head>
         <body>
             <div class="container">
-                <!-- Header -->
                 <div class="header">
                     <div style="display: flex; align-items: center; gap: 16px;">
                         <svg class="silver-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -176,13 +174,8 @@ app.get('/', async (req, res) => {
                         </svg>
                         <h1>Silver Price Dashboard</h1>
                     </div>
-                    <div>
-                        <button id="updateBtn" class="update-btn" disabled title="Requires paid API tier">Update Now</button>
-                        <div class="note">Currently unavailable (paid API tier required)</div>
-                    </div>
                 </div>
 
-                <!-- Current Price -->
                 <div class="card">
                     <h2>Current Silver Price (USD per oz)</h2>
                     <div class="price">$${latest ? latest.Price : '—'}</div>
@@ -192,19 +185,17 @@ app.get('/', async (req, res) => {
                     </div>
                 </div>
 
-                <!-- Chart -->
                 <div class="card">
                     <h2>Silver Price Trend</h2>
                     <div class="toggle-buttons">
                         <a href="/?range=3d" class="${range === '3d' || !req.query.range ? 'active' : ''}">3 Days</a>
                         <a href="/?range=7d" class="${range === '7d' ? 'active' : ''}">7 Days</a>
-                        <a href="/?range=30d" class="${range === '30d' ? 'active' : ''}">30 Days</a>
+                        <a href="/?range=1m" class="${range === '30d' ? 'active' : ''}">1 Month</a>
                         <a href="/?range=3m" class="${range === '3m' ? 'active' : ''}">3 Months</a>
                     </div>
                     <canvas id="silverChart"></canvas>
                 </div>
 
-                <!-- Data Table -->
                 <div class="card">
                     <h2>Price History</h2>
                     <table>
@@ -220,7 +211,6 @@ app.get('/', async (req, res) => {
                     </table>
                 </div>
 
-                <!-- Manual Entry -->
                 <div class="card">
                     <h2>Manual Entry</h2>
                     <form action="/manual-update" method="POST" class="manual-form">
@@ -266,7 +256,7 @@ app.get('/', async (req, res) => {
     }
 });
 
-// Update silver price (kept for future paid API use)
+// Update silver price (kept for future use)
 app.get('/update-silver', async (req, res) => {
     try {
         const result = await fetchSilverPriceFromPolygon();
@@ -321,18 +311,12 @@ app.get('/test-db', async (req, res) => {
     }
 });
 
-// ============================================
-// Start Server
-// ============================================
+// Start server
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
 });
 
-// Graceful shutdown
 process.on('SIGINT', async () => {
-    if (poolPromise) {
-        const pool = await poolPromise;
-        await pool.close();
-    }
+    if (poolPromise) await (await poolPromise).close();
     process.exit(0);
 });
