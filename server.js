@@ -31,11 +31,10 @@ async function getPool() {
     return poolPromise;
 }
 
-// Metal ticker mapping for Massive/Polygon-style API
 const METAL_TICKERS = {
-    'XAG': 'X:XAGUSD',   // Silver
-    'XAU': 'X:XAUUSD',   // Gold
-    'XCU': 'X:XCUUSD'    // Copper
+    'XAG': 'X:XAGUSD',
+    'XAU': 'X:XAUUSD',
+    'XCU': 'X:XCUUSD'
 };
 
 const METAL_NAMES = {
@@ -44,7 +43,13 @@ const METAL_NAMES = {
     'XCU': 'Copper'
 };
 
-// Fetch price for any metal
+// Theme colors for each metal
+const METAL_THEMES = {
+    'XAG': { primary: '#64748b', secondary: '#94a3b8', accent: '#475569' },   // Silver - cool gray
+    'XAU': { primary: '#d4af37', secondary: '#f4d35e', accent: '#b8860b' },   // Gold - warm gold
+    'XCU': { primary: '#b87333', secondary: '#cd7f32', accent: '#8b4513' }    // Copper - warm brown
+};
+
 async function fetchMetalPrice(metalCode) {
     if (!POLYGON_API_KEY) throw new Error('POLYGON_API_KEY is not set');
     const ticker = METAL_TICKERS[metalCode];
@@ -81,9 +86,6 @@ async function fetchMetalPrice(metalCode) {
     }
 }
 
-// ============================================
-// Main Dashboard (Multi-Metal)
-// ============================================
 app.get('/', async (req, res) => {
     try {
         const selectedMetal = (req.query.metal || 'XAG').toUpperCase();
@@ -93,34 +95,22 @@ app.get('/', async (req, res) => {
         if (range === '30d') days = 30;
         if (range === '3m') days = 90;
 
+        const theme = METAL_THEMES[selectedMetal] || METAL_THEMES['XAG'];
         const pool = await getPool();
 
-        // Latest price for selected metal
         const latestResult = await pool.request()
             .input('Metal', sql.VarChar(10), selectedMetal)
-            .query(`
-                SELECT TOP 1 Price, Timestamp, Source 
-                FROM MetalPrices 
-                WHERE Metal = @Metal
-                ORDER BY Timestamp DESC
-            `);
+            .query(`SELECT TOP 1 Price, Timestamp, Source FROM MetalPrices WHERE Metal = @Metal ORDER BY Timestamp DESC`);
 
-        // Raw data for chart
         const rawResult = await pool.request()
             .input('Metal', sql.VarChar(10), selectedMetal)
             .input('Days', sql.Int, days)
-            .query(`
-                SELECT CAST(Timestamp AS DATE) as TradeDate, Price 
-                FROM MetalPrices 
-                WHERE Metal = @Metal 
-                  AND Timestamp >= DATEADD(day, -@Days, GETDATE())
-                ORDER BY Timestamp ASC
-            `);
+            .query(`SELECT CAST(Timestamp AS DATE) as TradeDate, Price FROM MetalPrices 
+                    WHERE Metal = @Metal AND Timestamp >= DATEADD(day, -@Days, GETDATE()) ORDER BY Timestamp ASC`);
 
         const latest = latestResult.recordset[0];
         const rawData = rawResult.recordset;
 
-        // Daily OHLC aggregation
         const dailyMap = {};
         rawData.forEach(row => {
             const key = row.TradeDate.toISOString().split('T')[0];
@@ -136,30 +126,17 @@ app.get('/', async (req, res) => {
         const sortedDates = Object.keys(dailyMap).sort();
         const dailyOHLC = sortedDates.map(date => dailyMap[date]);
 
-        const labels = dailyOHLC.map(d => 
-            d.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        );
+        const labels = dailyOHLC.map(d => d.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
         const closePrices = dailyOHLC.map(d => d.close);
-
-        const candlestickData = dailyOHLC.map(d => ({
-            x: d.date.getTime(),
-            o: d.open,
-            h: d.high,
-            l: d.low,
-            c: d.close
-        }));
 
         let ohlcRows = '';
         dailyOHLC.forEach(d => {
             const dateLabel = d.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-            ohlcRows += `
-                <tr>
-                    <td>${dateLabel}</td>
-                    <td style="text-align:right;">$${d.open.toFixed(2)}</td>
-                    <td style="text-align:right;">$${d.high.toFixed(2)}</td>
-                    <td style="text-align:right;">$${d.low.toFixed(2)}</td>
-                    <td style="text-align:right;">$${d.close.toFixed(2)}</td>
-                </tr>`;
+            ohlcRows += `<tr><td>${dateLabel}</td>
+                <td style="text-align:right;">$${d.open.toFixed(2)}</td>
+                <td style="text-align:right;">$${d.high.toFixed(2)}</td>
+                <td style="text-align:right;">$${d.low.toFixed(2)}</td>
+                <td style="text-align:right;">$${d.close.toFixed(2)}</td></tr>`;
         });
 
         const metalName = METAL_NAMES[selectedMetal] || 'Metal';
@@ -182,9 +159,9 @@ app.get('/', async (req, res) => {
                 .price { font-size: 48px; font-weight: 700; color: #0f172a; margin: 12px 0; }
                 .meta { color: #64748b; font-size: 15px; }
                 .metal-buttons a { padding: 8px 20px; margin-right: 8px; text-decoration: none; background: #e2e8f0; color: #334155; border-radius: 6px; font-size: 14px; font-weight: 500; }
-                .metal-buttons a.active { background: #0f172a; color: white; }
+                .metal-buttons a.active { background: ${theme.primary}; color: white; }
                 .toggle-buttons a { padding: 8px 16px; margin-right: 8px; text-decoration: none; background: #e2e8f0; color: #334155; border-radius: 6px; font-size: 14px; }
-                .toggle-buttons a.active { background: #64748b; color: white; }
+                .toggle-buttons a.active { background: ${theme.primary}; color: white; }
                 table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 14px; }
                 th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
                 th { background: #f1f5f9; font-weight: 600; }
@@ -195,9 +172,9 @@ app.get('/', async (req, res) => {
                 <div class="header">
                     <div style="display: flex; align-items: center; gap: 16px;">
                         <svg class="silver-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="12" cy="12" r="10" stroke="#64748b" stroke-width="2"/>
-                            <circle cx="12" cy="12" r="6" fill="#94a3b8"/>
-                            <text x="12" y="16" text-anchor="middle" fill="#1e2937" font-size="8" font-weight="bold">Ag</text>
+                            <circle cx="12" cy="12" r="10" stroke="${theme.primary}" stroke-width="2"/>
+                            <circle cx="12" cy="12" r="6" fill="${theme.secondary}"/>
+                            <text x="12" y="16" text-anchor="middle" fill="#1e2937" font-size="8" font-weight="bold">${selectedMetal}</text>
                         </svg>
                         <h1>Metals Price Dashboard</h1>
                     </div>
@@ -271,8 +248,8 @@ app.get('/', async (req, res) => {
                         datasets: [{
                             label: '${metalName} Close Price',
                             data: ${JSON.stringify(closePrices)},
-                            borderColor: '#64748b',
-                            backgroundColor: 'rgba(100, 116, 139, 0.1)',
+                            borderColor: '${theme.primary}',
+                            backgroundColor: '${theme.secondary}33',
                             borderWidth: 3,
                             tension: 0.3,
                             fill: true
@@ -297,7 +274,6 @@ app.get('/', async (req, res) => {
     }
 });
 
-// Update price for selected metal
 app.get('/update-silver', async (req, res) => {
     try {
         const metal = (req.query.metal || 'XAG').toUpperCase();
@@ -308,7 +284,6 @@ app.get('/update-silver', async (req, res) => {
     }
 });
 
-// Manual entry for any metal
 app.post('/manual-update', async (req, res) => {
     try {
         const { metal, price, timestamp } = req.body;
