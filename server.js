@@ -229,7 +229,7 @@ app.get('/', async (req, res) => {
                         <input type="hidden" name="metal" value="${selectedMetal}">
                         <div>
                             <label>Price (USD)</label><br>
-                            <input type="number" step="0.01" name="price" value="76.89" required>
+                            <input type="number" step="0.01" name="price" value="${latest ? latest.Price.toFixed(2) : '0.00'}" required>
                         </div>
                         <div>
                             <label>Timestamp</label><br>
