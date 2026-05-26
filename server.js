@@ -31,6 +31,36 @@ async function getPool() {
     return poolPromise;
 }
 
+// Eastern Time helper functions
+function formatEasternTime(date) {
+    if (!date) return 'No data';
+    return new Date(date).toLocaleString('en-US', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        second: 'numeric'
+    });
+}
+
+function getEasternDateTimeLocal() {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+    }).formatToParts(now);
+
+    const get = (type) => parts.find(p => p.type === type).value;
+    return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
+}
+
 const METAL_TICKERS = {
     'XAG': 'X:XAGUSD',
     'XAU': 'X:XAUUSD',
@@ -126,12 +156,24 @@ app.get('/', async (req, res) => {
         const sortedDates = Object.keys(dailyMap).sort();
         const dailyOHLC = sortedDates.map(date => dailyMap[date]);
 
-        const labels = dailyOHLC.map(d => d.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+        const labels = dailyOHLC.map(d => 
+            d.date.toLocaleDateString('en-US', { 
+                timeZone: 'America/New_York',
+                month: 'short', 
+                day: 'numeric' 
+            })
+        );
+
         const closePrices = dailyOHLC.map(d => d.close);
 
         let ohlcRows = '';
         dailyOHLC.forEach(d => {
-            const dateLabel = d.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+            const dateLabel = d.date.toLocaleDateString('en-US', { 
+                timeZone: 'America/New_York',
+                weekday: 'short', 
+                month: 'short', 
+                day: 'numeric' 
+            });
             ohlcRows += `<tr><td>${dateLabel}</td>
                 <td style="text-align:right;">$${d.open.toFixed(2)}</td>
                 <td style="text-align:right;">$${d.high.toFixed(2)}</td>
@@ -189,7 +231,7 @@ app.get('/', async (req, res) => {
                     <h2>Current ${metalName} Price (USD per oz)</h2>
                     <div class="price">$${latest ? latest.Price : '—'}</div>
                     <div class="meta">
-                        Last updated: ${latest ? new Date(latest.Timestamp).toLocaleString() : 'No data'}<br>
+                        Last updated: ${formatEasternTime(latest ? latest.Timestamp : null)}<br>
                         Source: ${latest ? latest.Source : 'N/A'}
                     </div>
                 </div>
@@ -233,7 +275,7 @@ app.get('/', async (req, res) => {
                         </div>
                         <div>
                             <label>Timestamp</label><br>
-                            <input type="datetime-local" name="timestamp" value="${new Date().toISOString().slice(0,16)}" required>
+                            <input type="datetime-local" name="timestamp" value="${getEasternDateTimeLocal()}" required>
                         </div>
                         <button type="submit" style="background:#166534;color:white;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;">Add Entry</button>
                     </form>
