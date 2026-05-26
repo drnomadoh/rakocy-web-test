@@ -1,4 +1,4 @@
-// server.js - FINAL ROBUST VERSION (May 26 Data Fix)
+// server.js - FINAL VERSION (Pure JS Date Grouping - Most Reliable)
 const express = require('express');
 const sql = require('mssql');
 const axios = require('axios');
@@ -31,13 +31,6 @@ async function getPool() {
         poolPromise = new sql.ConnectionPool(config).connect();
     }
     return poolPromise;
-}
-
-// Get start date for the range in Eastern Time
-function getEasternStartDate(days) {
-    const today = new Date();
-    today.setDate(today.getDate() - days);
-    return today.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
 function easternToUTC(easternDateTimeString) {
@@ -132,31 +125,36 @@ app.get('/', async (req, res) => {
             .input('Metal', sql.VarChar(10), selectedMetal)
             .query(`SELECT TOP 1 Price, Timestamp, Source FROM MetalPrices WHERE Metal = @Metal ORDER BY Timestamp DESC`);
 
-        const startDate = getEasternStartDate(days);
-
         const rawResult = await pool.request()
             .input('Metal', sql.VarChar(10), selectedMetal)
-            .input('StartDate', sql.Date, startDate)
-            .query(`SELECT CAST(Timestamp AS DATE) as TradeDate, Price FROM MetalPrices 
-                    WHERE Metal = @Metal AND CAST(Timestamp AS DATE) >= @StartDate 
+            .input('Days', sql.Int, days)
+            .query(`SELECT Timestamp, Price FROM MetalPrices 
+                    WHERE Metal = @Metal AND Timestamp >= DATEADD(day, -@Days, GETUTCDATE()) 
                     ORDER BY Timestamp ASC`);
 
         const latest = latestResult.recordset[0];
         const rawData = rawResult.recordset;
 
+        // Group by Eastern Time date (most reliable method)
         const dailyMap = {};
         rawData.forEach(row => {
-            const easternDateStr = new Date(row.TradeDate).toLocaleDateString('en-CA', { 
+            const easternDate = new Date(row.Timestamp).toLocaleDateString('en-CA', { 
                 timeZone: 'America/New_York' 
             });
-            const key = easternDateStr;
-
-            if (!dailyMap[key]) {
-                dailyMap[key] = { open: row.Price, high: row.Price, low: row.Price, close: row.Price, date: row.TradeDate };
+            
+            if (!dailyMap[easternDate]) {
+                dailyMap[easternDate] = { 
+                    open: row.Price, 
+                    high: row.Price, 
+                    low: row.Price, 
+                    close: row.Price, 
+                    date: row.Timestamp 
+                };
             } else {
-                dailyMap[key].high = Math.max(dailyMap[key].high, row.Price);
-                dailyMap[key].low = Math.min(dailyMap[key].low, row.Price);
-                dailyMap[key].close = row.Price;
+                dailyMap[easternDate].high = Math.max(dailyMap[easternDate].high, row.Price);
+                dailyMap[easternDate].low = Math.min(dailyMap[easternDate].low, row.Price);
+                dailyMap[easternDate].close = row.Price;
+                dailyMap[easternDate].date = row.Timestamp;
             }
         });
 
@@ -164,18 +162,23 @@ app.get('/', async (req, res) => {
         const dailyOHLC = sortedDates.map(date => dailyMap[date]);
 
         const apexCandlestick = dailyOHLC.map(d => ({
-            x: d.date.toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' }),
+            x: new Date(d.date).toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' }),
             y: [parseFloat(d.open.toFixed(2)), parseFloat(d.high.toFixed(2)), parseFloat(d.low.toFixed(2)), parseFloat(d.close.toFixed(2))]
         }));
 
         const apexLine = dailyOHLC.map(d => ({
-            x: d.date.toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' }),
+            x: new Date(d.date).toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' }),
             y: parseFloat(d.close.toFixed(2))
         }));
 
         let ohlcRows = '';
         dailyOHLC.forEach(d => {
-            const dateLabel = d.date.toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' });
+            const dateLabel = new Date(d.date).toLocaleDateString('en-US', { 
+                timeZone: 'America/New_York', 
+                weekday: 'short', 
+                month: 'short', 
+                day: 'numeric' 
+            });
             ohlcRows += `<tr><td>${dateLabel}</td>
                 <td style="text-align:right;">$${d.open.toFixed(2)}</td>
                 <td style="text-align:right;">$${d.high.toFixed(2)}</td>
