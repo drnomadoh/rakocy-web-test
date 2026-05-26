@@ -1,4 +1,4 @@
-// server.js - Fixed timezone version for Azure
+// server.js - Final Fixed Version for Azure (Timezone Safe)
 const express = require('express');
 const sql = require('mssql');
 const axios = require('axios');
@@ -33,13 +33,11 @@ async function getPool() {
     return poolPromise;
 }
 
-// Convert Eastern datetime-local string to UTC Date object
+// Convert Eastern datetime-local to proper UTC
 function easternToUTC(easternDateTimeString) {
-    // easternDateTimeString example: "2026-05-26T16:34"
     const easternDate = new Date(easternDateTimeString);
-    // Get the UTC equivalent by adjusting for Eastern offset (EDT = UTC-4 in May)
-    const utcDate = new Date(easternDate.getTime() + (4 * 60 * 60 * 1000));
-    return utcDate;
+    // May 2026 is EDT (UTC-4)
+    return new Date(easternDate.getTime() + (4 * 60 * 60 * 1000));
 }
 
 function formatEasternTime(date) {
@@ -71,7 +69,6 @@ const METAL_THEMES = {
 };
 
 async function fetchMetalPrice(metalCode) {
-    // ... (same as before - unchanged)
     if (!POLYGON_API_KEY) throw new Error('POLYGON_API_KEY is not set');
     const ticker = METAL_TICKERS[metalCode];
     if (!ticker) throw new Error('Invalid metal code');
@@ -130,7 +127,6 @@ app.get('/', async (req, res) => {
             .input('Metal', sql.VarChar(10), selectedMetal)
             .query(`SELECT TOP 1 Price, Timestamp, Source FROM MetalPrices WHERE Metal = @Metal ORDER BY Timestamp DESC`);
 
-        // FIXED: Use GETUTCDATE() for consistent timezone handling
         const rawResult = await pool.request()
             .input('Metal', sql.VarChar(10), selectedMetal)
             .input('Days', sql.Int, days)
@@ -141,9 +137,14 @@ app.get('/', async (req, res) => {
         const latest = latestResult.recordset[0];
         const rawData = rawResult.recordset;
 
+        // FIXED: Build daily map using Eastern Time date key
         const dailyMap = {};
         rawData.forEach(row => {
-            const key = row.TradeDate.toISOString().split('T')[0];
+            const easternDateStr = new Date(row.TradeDate).toLocaleDateString('en-CA', { 
+                timeZone: 'America/New_York' 
+            });
+            const key = easternDateStr;
+
             if (!dailyMap[key]) {
                 dailyMap[key] = { open: row.Price, high: row.Price, low: row.Price, close: row.Price, date: row.TradeDate };
             } else {
@@ -301,8 +302,6 @@ app.post('/manual-update', async (req, res) => {
     try {
         const { metal, price, timestamp, range } = req.body;
         const pool = await getPool();
-        
-        // FIXED: Convert Eastern time input to proper UTC timestamp
         const utcTimestamp = easternToUTC(timestamp);
         
         await pool.request()
