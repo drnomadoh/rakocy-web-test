@@ -1,4 +1,4 @@
-// server.js
+// server.js - Fixed timezone version for Azure
 const express = require('express');
 const sql = require('mssql');
 const axios = require('axios');
@@ -33,17 +33,21 @@ async function getPool() {
     return poolPromise;
 }
 
-// Eastern Time helper functions
+// Convert Eastern datetime-local string to UTC Date object
+function easternToUTC(easternDateTimeString) {
+    // easternDateTimeString example: "2026-05-26T16:34"
+    const easternDate = new Date(easternDateTimeString);
+    // Get the UTC equivalent by adjusting for Eastern offset (EDT = UTC-4 in May)
+    const utcDate = new Date(easternDate.getTime() + (4 * 60 * 60 * 1000));
+    return utcDate;
+}
+
 function formatEasternTime(date) {
     if (!date) return 'No data';
     return new Date(date).toLocaleString('en-US', {
         timeZone: 'America/New_York',
-        year: 'numeric',
-        month: 'numeric',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: 'numeric',
-        second: 'numeric'
+        year: 'numeric', month: 'numeric', day: 'numeric',
+        hour: 'numeric', minute: 'numeric', second: 'numeric'
     });
 }
 
@@ -51,30 +55,15 @@ function getEasternDateTimeLocal() {
     const now = new Date();
     const parts = new Intl.DateTimeFormat('en-US', {
         timeZone: 'America/New_York',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false
     }).formatToParts(now);
-
     const get = (type) => parts.find(p => p.type === type).value;
     return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
 }
 
-const METAL_TICKERS = {
-    'XAG': 'X:XAGUSD',
-    'XAU': 'X:XAUUSD',
-    'XCU': 'X:XCUUSD'
-};
-
-const METAL_NAMES = {
-    'XAG': 'Silver',
-    'XAU': 'Gold',
-    'XCU': 'Copper'
-};
-
+const METAL_TICKERS = { 'XAG': 'X:XAGUSD', 'XAU': 'X:XAUUSD', 'XCU': 'X:XCUUSD' };
+const METAL_NAMES = { 'XAG': 'Silver', 'XAU': 'Gold', 'XCU': 'Copper' };
 const METAL_THEMES = {
     'XAG': { primary: '#64748b', secondary: '#94a3b8', accent: '#475569' },
     'XAU': { primary: '#d4af37', secondary: '#f4d35e', accent: '#b8860b' },
@@ -82,6 +71,7 @@ const METAL_THEMES = {
 };
 
 async function fetchMetalPrice(metalCode) {
+    // ... (same as before - unchanged)
     if (!POLYGON_API_KEY) throw new Error('POLYGON_API_KEY is not set');
     const ticker = METAL_TICKERS[metalCode];
     if (!ticker) throw new Error('Invalid metal code');
@@ -140,11 +130,13 @@ app.get('/', async (req, res) => {
             .input('Metal', sql.VarChar(10), selectedMetal)
             .query(`SELECT TOP 1 Price, Timestamp, Source FROM MetalPrices WHERE Metal = @Metal ORDER BY Timestamp DESC`);
 
+        // FIXED: Use GETUTCDATE() for consistent timezone handling
         const rawResult = await pool.request()
             .input('Metal', sql.VarChar(10), selectedMetal)
             .input('Days', sql.Int, days)
             .query(`SELECT CAST(Timestamp AS DATE) as TradeDate, Price FROM MetalPrices 
-                    WHERE Metal = @Metal AND Timestamp >= DATEADD(day, -@Days, GETDATE()) ORDER BY Timestamp ASC`);
+                    WHERE Metal = @Metal AND Timestamp >= DATEADD(day, -@Days, GETUTCDATE()) 
+                    ORDER BY Timestamp ASC`);
 
         const latest = latestResult.recordset[0];
         const rawData = rawResult.recordset;
@@ -309,11 +301,17 @@ app.post('/manual-update', async (req, res) => {
     try {
         const { metal, price, timestamp, range } = req.body;
         const pool = await getPool();
+        
+        // FIXED: Convert Eastern time input to proper UTC timestamp
+        const utcTimestamp = easternToUTC(timestamp);
+        
         await pool.request()
             .input('Metal', sql.VarChar(10), metal || 'XAG')
             .input('Price', sql.Decimal(18, 4), parseFloat(price))
-            .input('Timestamp', sql.DateTime2, new Date(timestamp))
-            .query(`INSERT INTO MetalPrices (Metal, Price, Timestamp, Source) VALUES (@Metal, @Price, @Timestamp, 'Manual Entry')`);
+            .input('Timestamp', sql.DateTime2, utcTimestamp)
+            .query(`INSERT INTO MetalPrices (Metal, Price, Timestamp, Source)
+                    VALUES (@Metal, @Price, @Timestamp, 'Manual Entry')`);
+        
         res.redirect(`/?metal=${metal || 'XAG'}&range=${range || '30d'}`);
     } catch (err) {
         res.status(500).send('Failed to add entry');
