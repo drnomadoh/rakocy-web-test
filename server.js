@@ -1,4 +1,4 @@
-// server.js - Final Fixed Version for Azure (Timezone Safe)
+// server.js - FINAL ROBUST VERSION (May 26 Data Fix)
 const express = require('express');
 const sql = require('mssql');
 const axios = require('axios');
@@ -33,10 +33,15 @@ async function getPool() {
     return poolPromise;
 }
 
-// Convert Eastern datetime-local to proper UTC
+// Get start date for the range in Eastern Time
+function getEasternStartDate(days) {
+    const today = new Date();
+    today.setDate(today.getDate() - days);
+    return today.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+}
+
 function easternToUTC(easternDateTimeString) {
     const easternDate = new Date(easternDateTimeString);
-    // May 2026 is EDT (UTC-4)
     return new Date(easternDate.getTime() + (4 * 60 * 60 * 1000));
 }
 
@@ -127,17 +132,18 @@ app.get('/', async (req, res) => {
             .input('Metal', sql.VarChar(10), selectedMetal)
             .query(`SELECT TOP 1 Price, Timestamp, Source FROM MetalPrices WHERE Metal = @Metal ORDER BY Timestamp DESC`);
 
+        const startDate = getEasternStartDate(days);
+
         const rawResult = await pool.request()
             .input('Metal', sql.VarChar(10), selectedMetal)
-            .input('Days', sql.Int, days)
+            .input('StartDate', sql.Date, startDate)
             .query(`SELECT CAST(Timestamp AS DATE) as TradeDate, Price FROM MetalPrices 
-                    WHERE Metal = @Metal AND Timestamp >= DATEADD(day, -@Days, GETUTCDATE()) 
+                    WHERE Metal = @Metal AND CAST(Timestamp AS DATE) >= @StartDate 
                     ORDER BY Timestamp ASC`);
 
         const latest = latestResult.recordset[0];
         const rawData = rawResult.recordset;
 
-        // FIXED: Build daily map using Eastern Time date key
         const dailyMap = {};
         rawData.forEach(row => {
             const easternDateStr = new Date(row.TradeDate).toLocaleDateString('en-CA', { 
