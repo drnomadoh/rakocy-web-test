@@ -120,6 +120,7 @@ app.get('/', async (req, res) => {
     try {
         const selectedMetal = (req.query.metal || 'XAG').toUpperCase();
         const range = req.query.range || '3d';
+        const chartType = (req.query.chart || 'line').toLowerCase(); // 'line' or 'candlestick'
         let days = 3;
         if (range === '7d') days = 7;
         if (range === '30d') days = 30;
@@ -156,6 +157,7 @@ app.get('/', async (req, res) => {
         const sortedDates = Object.keys(dailyMap).sort();
         const dailyOHLC = sortedDates.map(date => dailyMap[date]);
 
+        // Line chart data (Chart.js)
         const labels = dailyOHLC.map(d => 
             d.date.toLocaleDateString('en-US', { 
                 timeZone: 'America/New_York',
@@ -163,8 +165,26 @@ app.get('/', async (req, res) => {
                 day: 'numeric' 
             })
         );
-
         const closePrices = dailyOHLC.map(d => d.close);
+
+        // ApexCharts candlestick + line data
+        const apexCandlestick = dailyOHLC.map(d => ({
+            x: d.date.toLocaleDateString('en-US', { 
+                timeZone: 'America/New_York',
+                month: 'short', 
+                day: 'numeric' 
+            }),
+            y: [parseFloat(d.open.toFixed(2)), parseFloat(d.high.toFixed(2)), parseFloat(d.low.toFixed(2)), parseFloat(d.close.toFixed(2))]
+        }));
+
+        const apexLine = dailyOHLC.map(d => ({
+            x: d.date.toLocaleDateString('en-US', { 
+                timeZone: 'America/New_York',
+                month: 'short', 
+                day: 'numeric' 
+            }),
+            y: parseFloat(d.close.toFixed(2))
+        }));
 
         let ohlcRows = '';
         dailyOHLC.forEach(d => {
@@ -192,6 +212,7 @@ app.get('/', async (req, res) => {
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Metals Price Dashboard</title>
             <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+            <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
             <style>
                 body { font-family: system-ui, sans-serif; background: #f8fafc; margin: 0; padding: 40px 20px; color: #1e2937; }
                 .container { max-width: 1000px; margin: 0 auto; }
@@ -200,13 +221,12 @@ app.get('/', async (req, res) => {
                 .card { background: white; border-radius: 16px; padding: 28px; box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1); margin-bottom: 24px; }
                 .price { font-size: 48px; font-weight: 700; color: #0f172a; margin: 12px 0; }
                 .meta { color: #64748b; font-size: 15px; }
-                .metal-buttons a { padding: 8px 20px; margin-right: 8px; text-decoration: none; background: #e2e8f0; color: #334155; border-radius: 6px; font-size: 14px; font-weight: 500; }
-                .metal-buttons a.active { background: ${theme.primary}; color: white; }
-                .toggle-buttons a { padding: 8px 16px; margin-right: 8px; text-decoration: none; background: #e2e8f0; color: #334155; border-radius: 6px; font-size: 14px; }
-                .toggle-buttons a.active { background: ${theme.primary}; color: white; }
+                .metal-buttons a, .toggle-buttons a { padding: 8px 16px; margin-right: 8px; text-decoration: none; background: #e2e8f0; color: #334155; border-radius: 6px; font-size: 14px; font-weight: 500; }
+                .metal-buttons a.active, .toggle-buttons a.active { background: ${theme.primary}; color: white; }
                 table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 14px; }
                 th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
                 th { background: #f1f5f9; font-weight: 600; }
+                #candlestickChart { min-height: 420px; }
             </style>
         </head>
         <body>
@@ -222,7 +242,7 @@ app.get('/', async (req, res) => {
                     </div>
                     <div class="metal-buttons">
                         ${metalOptions.map(m => 
-                            `<a href="/?metal=${m}&range=${range}" class="${selectedMetal === m ? 'active' : ''}">${METAL_NAMES[m]}</a>`
+                            `<a href="/?metal=${m}&range=${range}&chart=${chartType}" class="${selectedMetal === m ? 'active' : ''}">${METAL_NAMES[m]}</a>`
                         ).join('')}
                     </div>
                 </div>
@@ -238,13 +258,22 @@ app.get('/', async (req, res) => {
 
                 <div class="card">
                     <h2>${metalName} Price Trend</h2>
-                    <div class="toggle-buttons">
-                        <a href="/?metal=${selectedMetal}&range=3d" class="${range === '3d' ? 'active' : ''}">3 Days</a>
-                        <a href="/?metal=${selectedMetal}&range=7d" class="${range === '7d' ? 'active' : ''}">7 Days</a>
-                        <a href="/?metal=${selectedMetal}&range=30d" class="${range === '30d' ? 'active' : ''}">1 Month</a>
-                        <a href="/?metal=${selectedMetal}&range=3m" class="${range === '3m' ? 'active' : ''}">3 Months</a>
+                    
+                    <!-- Chart Type Tabs -->
+                    <div class="toggle-buttons" style="margin-bottom: 16px;">
+                        <a href="/?metal=${selectedMetal}&range=${range}&chart=line" class="${chartType === 'line' ? 'active' : ''}">Line</a>
+                        <a href="/?metal=${selectedMetal}&range=${range}&chart=candlestick" class="${chartType === 'candlestick' ? 'active' : ''}">Candlestick + Line</a>
                     </div>
-                    <canvas id="silverChart"></canvas>
+
+                    <!-- Line Chart (Chart.js) -->
+                    <div id="lineChartContainer" style="display: ${chartType === 'line' ? 'block' : 'none'};">
+                        <canvas id="lineChart"></canvas>
+                    </div>
+
+                    <!-- Candlestick + Line Chart (ApexCharts) -->
+                    <div id="candlestickChartContainer" style="display: ${chartType === 'candlestick' ? 'block' : 'none'};">
+                        <div id="candlestickChart"></div>
+                    </div>
                 </div>
 
                 <div class="card">
@@ -283,7 +312,9 @@ app.get('/', async (req, res) => {
             </div>
 
             <script>
-                new Chart(document.getElementById('silverChart'), {
+                // Line Chart (Chart.js) - only initialize if visible
+                ${chartType === 'line' ? `
+                new Chart(document.getElementById('lineChart'), {
                     type: 'line',
                     data: {
                         labels: ${JSON.stringify(labels)},
@@ -305,6 +336,58 @@ app.get('/', async (req, res) => {
                         }
                     }
                 });
+                ` : ''}
+
+                // Candlestick + Line Chart (ApexCharts)
+                ${chartType === 'candlestick' ? `
+                var options = {
+                    series: [
+                        {
+                            name: "Candlestick",
+                            type: "candlestick",
+                            data: ${JSON.stringify(apexCandlestick)}
+                        },
+                        {
+                            name: "Close Price",
+                            type: "line",
+                            data: ${JSON.stringify(apexLine)}
+                        }
+                    ],
+                    chart: {
+                        height: 420,
+                        type: "line",
+                        toolbar: { show: true }
+                    },
+                    title: {
+                        text: "${metalName} Candlestick + Line",
+                        align: "left",
+                        style: { fontSize: "16px", fontWeight: "600" }
+                    },
+                    stroke: {
+                        width: [1, 3],
+                        curve: "smooth"
+                    },
+                    colors: ["#ef4444", "${theme.primary}"],
+                    xaxis: {
+                        type: "category",
+                        labels: { rotate: -45 }
+                    },
+                    yaxis: {
+                        tooltip: { enabled: true }
+                    },
+                    tooltip: {
+                        shared: true,
+                        intersect: false
+                    },
+                    legend: {
+                        show: true,
+                        position: "top"
+                    }
+                };
+
+                var chart = new ApexCharts(document.querySelector("#candlestickChart"), options);
+                chart.render();
+                ` : ''}
             </script>
         </body>
         </html>`;
