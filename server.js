@@ -155,6 +155,9 @@ const METAL_THEMES = {
     'XCU': { primary: '#b87333', secondary: '#cd7f32', accent: '#8b4513' }
 };
 
+// Desired display order of the metal tabs (left to right)
+const METAL_ORDER = ['XAU', 'XAG', 'XCU']; // Gold, Silver, Copper
+
 // Map UI range values to number of days
 const RANGE_DAYS = {
     '3d': 3,
@@ -173,7 +176,7 @@ app.get('/', async (req, res) => {
         const days = getDaysFromRange(range);
         const theme = METAL_THEMES[selectedMetal] || METAL_THEMES['XAG'];
         const metalName = METAL_NAMES[selectedMetal] || 'Metal';
-        const metalOptions = Object.keys(METAL_NAMES);
+        const metalOptions = METAL_ORDER;
 
         const pool = await getPool();
 
