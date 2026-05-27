@@ -64,7 +64,7 @@ npm start
 npm run dev
 ```
 
-Open http://localhost:3000
+Open https://silverapp-dmedd9dabhg9asey.centralus-01.azurewebsites.net/
 
 ## Environment Variables
 
