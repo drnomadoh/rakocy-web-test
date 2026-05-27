@@ -1,14 +1,11 @@
-// server.js - FINAL VERSION (Pure JS Date Grouping - Most Reliable)
+// server.js - Metals Price Dashboard (Manual Entry + Historical Viewing)
 const express = require('express');
 const sql = require('mssql');
-const axios = require('axios');
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-const POLYGON_API_KEY = process.env.POLYGON_API_KEY;
 
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -58,49 +55,12 @@ function getEasternDateTimeLocal() {
     return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
 }
 
-const METAL_TICKERS = { 'XAG': 'X:XAGUSD', 'XAU': 'X:XAUUSD', 'XCU': 'X:XCUUSD' };
 const METAL_NAMES = { 'XAG': 'Silver', 'XAU': 'Gold', 'XCU': 'Copper' };
 const METAL_THEMES = {
     'XAG': { primary: '#64748b', secondary: '#94a3b8', accent: '#475569' },
     'XAU': { primary: '#d4af37', secondary: '#f4d35e', accent: '#b8860b' },
     'XCU': { primary: '#b87333', secondary: '#cd7f32', accent: '#8b4513' }
 };
-
-async function fetchMetalPrice(metalCode) {
-    if (!POLYGON_API_KEY) throw new Error('POLYGON_API_KEY is not set');
-    const ticker = METAL_TICKERS[metalCode];
-    if (!ticker) throw new Error('Invalid metal code');
-
-    try {
-        const to = new Date();
-        const from = new Date();
-        from.setDate(from.getDate() - 10);
-        const fromStr = from.toISOString().split('T')[0];
-        const toStr = to.toISOString().split('T')[0];
-
-        const url = `https://api.massive.com/v2/aggs/ticker/${ticker}/range/1/day/${fromStr}/${toStr}?apiKey=${POLYGON_API_KEY}`;
-        const response = await axios.get(url, { timeout: 60000 });
-
-        if (!response.data.results?.length) throw new Error('No data from Massive');
-
-        const latestBar = response.data.results.at(-1);
-        const price = latestBar.c;
-        const timestamp = new Date(latestBar.t);
-
-        const pool = await getPool();
-        await pool.request()
-            .input('Metal', sql.VarChar(10), metalCode)
-            .input('Price', sql.Decimal(18, 4), price)
-            .input('Timestamp', sql.DateTime2, timestamp)
-            .query(`INSERT INTO MetalPrices (Metal, Price, Timestamp, Source)
-                    VALUES (@Metal, @Price, @Timestamp, 'Massive')`);
-
-        return { price, timestamp, source: 'Massive', metal: metalCode };
-    } catch (error) {
-        console.error(`Error fetching ${metalCode}:`, error.message);
-        throw error;
-    }
-}
 
 app.get('/', async (req, res) => {
     try {
