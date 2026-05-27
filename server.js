@@ -1,4 +1,5 @@
 // server.js - Metals Price Dashboard (Manual Entry + Historical Viewing)
+// Clean, maintainable structure with extracted helpers and rendering logic.
 const express = require('express');
 const sql = require('mssql');
 const cookieParser = require('cookie-parser');
@@ -55,6 +56,90 @@ function getEasternDateTimeLocal() {
     return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
 }
 
+// Convert UI range string to number of days
+function getDaysFromRange(range) {
+    return RANGE_DAYS[range] || 30;
+}
+
+// Group raw price rows into daily OHLC (Open, High, Low, Close) using Eastern Time dates
+function calculateDailyOHLC(rawData) {
+    const dailyMap = {};
+
+    rawData.forEach(row => {
+        const easternDate = new Date(row.Timestamp).toLocaleDateString('en-CA', {
+            timeZone: 'America/New_York'
+        });
+
+        if (!dailyMap[easternDate]) {
+            dailyMap[easternDate] = {
+                open: row.Price,
+                high: row.Price,
+                low: row.Price,
+                close: row.Price,
+                date: row.Timestamp
+            };
+        } else {
+            dailyMap[easternDate].high = Math.max(dailyMap[easternDate].high, row.Price);
+            dailyMap[easternDate].low = Math.min(dailyMap[easternDate].low, row.Price);
+            dailyMap[easternDate].close = row.Price;
+            dailyMap[easternDate].date = row.Timestamp;
+        }
+    });
+
+    const sortedDates = Object.keys(dailyMap).sort();
+    return sortedDates.map(date => dailyMap[date]);
+}
+
+// Build data format expected by ApexCharts candlestick series
+function buildApexCandlestickData(dailyOHLC) {
+    return dailyOHLC.map(d => ({
+        x: new Date(d.date).toLocaleDateString('en-US', {
+            timeZone: 'America/New_York',
+            month: 'short',
+            day: 'numeric'
+        }),
+        y: [
+            parseFloat(d.open.toFixed(2)),
+            parseFloat(d.high.toFixed(2)),
+            parseFloat(d.low.toFixed(2)),
+            parseFloat(d.close.toFixed(2))
+        ]
+    }));
+}
+
+// Build data format for the close price line
+function buildApexLineData(dailyOHLC) {
+    return dailyOHLC.map(d => ({
+        x: new Date(d.date).toLocaleDateString('en-US', {
+            timeZone: 'America/New_York',
+            month: 'short',
+            day: 'numeric'
+        }),
+        y: parseFloat(d.close.toFixed(2))
+    }));
+}
+
+// Build HTML table rows for the OHLC summary
+function buildOHLCTableRows(dailyOHLC) {
+    let rows = '';
+    dailyOHLC.forEach(d => {
+        const dateLabel = new Date(d.date).toLocaleDateString('en-US', {
+            timeZone: 'America/New_York',
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric'
+        });
+        rows += `<tr>
+            <td>${dateLabel}</td>
+            <td style="text-align:right;">$${d.open.toFixed(2)}</td>
+            <td style="text-align:right;">$${d.high.toFixed(2)}</td>
+            <td style="text-align:right;">$${d.low.toFixed(2)}</td>
+            <td style="text-align:right;">$${d.close.toFixed(2)}</td>
+        </tr>`;
+    });
+    return rows;
+}
+
 const METAL_NAMES = { 'XAG': 'Silver', 'XAU': 'Gold', 'XCU': 'Copper' };
 const METAL_THEMES = {
     'XAG': { primary: '#64748b', secondary: '#94a3b8', accent: '#475569' },
@@ -62,23 +147,26 @@ const METAL_THEMES = {
     'XCU': { primary: '#b87333', secondary: '#cd7f32', accent: '#8b4513' }
 };
 
+// Map UI range values to number of days
+const RANGE_DAYS = {
+    '3d': 3,
+    '7d': 7,
+    '30d': 30,
+    '90d': 90,
+    '180d': 180,
+    '365d': 365
+};
+
 app.get('/', async (req, res) => {
     try {
-        const cookieMetal = req.cookies?.lastMetal || 'XAG';
-        const cookieRange = req.cookies?.lastRange || '30d';
+        const selectedMetal = (req.query.metal || req.cookies?.lastMetal || 'XAG').toUpperCase();
+        const range = req.query.range || req.cookies?.lastRange || '30d';
 
-        const selectedMetal = (req.query.metal || cookieMetal).toUpperCase();
-        const range = req.query.range || cookieRange;
-
-        let days = 30;
-        if (range === '3d') days = 3;
-        if (range === '7d') days = 7;
-        if (range === '30d') days = 30;
-        if (range === '90d') days = 90;
-        if (range === '180d') days = 180;
-        if (range === '365d') days = 365;
-
+        const days = getDaysFromRange(range);
         const theme = METAL_THEMES[selectedMetal] || METAL_THEMES['XAG'];
+        const metalName = METAL_NAMES[selectedMetal] || 'Metal';
+        const metalOptions = Object.keys(METAL_NAMES);
+
         const pool = await getPool();
 
         const latestResult = await pool.request()
@@ -95,64 +183,48 @@ app.get('/', async (req, res) => {
         const latest = latestResult.recordset[0];
         const rawData = rawResult.recordset;
 
-        // Group by Eastern Time date (most reliable method)
-        const dailyMap = {};
-        rawData.forEach(row => {
-            const easternDate = new Date(row.Timestamp).toLocaleDateString('en-CA', { 
-                timeZone: 'America/New_York' 
-            });
-            
-            if (!dailyMap[easternDate]) {
-                dailyMap[easternDate] = { 
-                    open: row.Price, 
-                    high: row.Price, 
-                    low: row.Price, 
-                    close: row.Price, 
-                    date: row.Timestamp 
-                };
-            } else {
-                dailyMap[easternDate].high = Math.max(dailyMap[easternDate].high, row.Price);
-                dailyMap[easternDate].low = Math.min(dailyMap[easternDate].low, row.Price);
-                dailyMap[easternDate].close = row.Price;
-                dailyMap[easternDate].date = row.Timestamp;
-            }
-        });
+        // Process data
+        const dailyOHLC = calculateDailyOHLC(rawData);
+        const apexCandlestick = buildApexCandlestickData(dailyOHLC);
+        const apexLine = buildApexLineData(dailyOHLC);
+        const ohlcRows = buildOHLCTableRows(dailyOHLC);
 
-        const sortedDates = Object.keys(dailyMap).sort();
-        const dailyOHLC = sortedDates.map(date => dailyMap[date]);
-
-        const apexCandlestick = dailyOHLC.map(d => ({
-            x: new Date(d.date).toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' }),
-            y: [parseFloat(d.open.toFixed(2)), parseFloat(d.high.toFixed(2)), parseFloat(d.low.toFixed(2)), parseFloat(d.close.toFixed(2))]
-        }));
-
-        const apexLine = dailyOHLC.map(d => ({
-            x: new Date(d.date).toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' }),
-            y: parseFloat(d.close.toFixed(2))
-        }));
-
-        let ohlcRows = '';
-        dailyOHLC.forEach(d => {
-            const dateLabel = new Date(d.date).toLocaleDateString('en-US', { 
-                timeZone: 'America/New_York', 
-                weekday: 'short', 
-                month: 'short', 
-                day: 'numeric' 
-            });
-            ohlcRows += `<tr><td>${dateLabel}</td>
-                <td style="text-align:right;">$${d.open.toFixed(2)}</td>
-                <td style="text-align:right;">$${d.high.toFixed(2)}</td>
-                <td style="text-align:right;">$${d.low.toFixed(2)}</td>
-                <td style="text-align:right;">$${d.close.toFixed(2)}</td></tr>`;
-        });
-
-        const metalName = METAL_NAMES[selectedMetal] || 'Metal';
-        const metalOptions = ['XAG', 'XAU', 'XCU'];
-
+        // Remember user preference
         res.cookie('lastMetal', selectedMetal, { maxAge: 30 * 24 * 60 * 60 * 1000 });
         res.cookie('lastRange', range, { maxAge: 30 * 24 * 60 * 60 * 1000 });
 
-        const html = `<!DOCTYPE html>
+        const html = renderDashboard({
+            selectedMetal,
+            range,
+            theme,
+            metalName,
+            metalOptions,
+            latest,
+            apexCandlestick,
+            apexLine,
+            ohlcRows
+        });
+
+        res.send(html);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('Error loading dashboard');
+    }
+});
+
+// Render the full dashboard HTML
+function renderDashboard({
+    selectedMetal,
+    range,
+    theme,
+    metalName,
+    metalOptions,
+    latest,
+    apexCandlestick,
+    apexLine,
+    ohlcRows
+}) {
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -259,13 +331,7 @@ app.get('/', async (req, res) => {
     </script>
 </body>
 </html>`;
-
-        res.send(html);
-    } catch (err) {
-        console.error(err);
-        res.status(500).send('Error loading dashboard');
-    }
-});
+}
 
 app.post('/manual-update', async (req, res) => {
     try {
