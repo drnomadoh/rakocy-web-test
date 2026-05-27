@@ -26,9 +26,17 @@ let poolPromise;
 
 async function getPool() {
     if (!poolPromise) {
+        if (!process.env.DB_SERVER || !process.env.DB_NAME) {
+            throw new Error('Database configuration is incomplete. Check DB_SERVER and DB_NAME environment variables.');
+        }
         poolPromise = new sql.ConnectionPool(config).connect();
     }
     return poolPromise;
+}
+
+// Simple error logger with context
+function logError(context, err) {
+    console.error(`[${context}]`, err);
 }
 
 function easternToUTC(easternDateTimeString) {
@@ -207,8 +215,17 @@ app.get('/', async (req, res) => {
 
         res.send(html);
     } catch (err) {
-        console.error(err);
-        res.status(500).send('Error loading dashboard');
+        logError('GET / dashboard', err);
+
+        // Provide more helpful feedback to the user
+        let message = 'Error loading dashboard';
+        if (err.message && err.message.includes('Database configuration')) {
+            message = 'Dashboard is not configured yet. Please set up your database connection.';
+        } else if (err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT') {
+            message = 'Unable to connect to the database. Please try again later.';
+        }
+
+        res.status(500).send(message);
     }
 });
 
@@ -336,20 +353,44 @@ function renderDashboard({
 app.post('/manual-update', async (req, res) => {
     try {
         const { metal, price, timestamp, range } = req.body;
+
+        // Basic validation
+        if (!price || isNaN(parseFloat(price))) {
+            return res.status(400).send('Please provide a valid price.');
+        }
+
         const pool = await getPool();
         const utcTimestamp = easternToUTC(timestamp);
-        
+
         await pool.request()
             .input('Metal', sql.VarChar(10), metal || 'XAG')
             .input('Price', sql.Decimal(18, 4), parseFloat(price))
             .input('Timestamp', sql.DateTime2, utcTimestamp)
             .query(`INSERT INTO MetalPrices (Metal, Price, Timestamp, Source)
                     VALUES (@Metal, @Price, @Timestamp, 'Manual Entry')`);
-        
+
         res.redirect(`/?metal=${metal || 'XAG'}&range=${range || '30d'}`);
     } catch (err) {
-        res.status(500).send('Failed to add entry');
+        logError('POST /manual-update', err);
+
+        let message = 'Failed to save the price entry.';
+        if (err.message && err.message.includes('Database configuration')) {
+            message = 'Cannot save entry: database is not configured.';
+        }
+
+        res.status(500).send(message);
     }
+});
+
+// 404 handler for unknown routes
+app.use((req, res) => {
+    res.status(404).send('Page not found');
+});
+
+// General error handler (catches anything that slips through)
+app.use((err, req, res, next) => {
+    logError('Unhandled error', err);
+    res.status(500).send('Something went wrong. Please try again later.');
 });
 
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
