@@ -342,7 +342,25 @@ function renderDashboard({
             colors: ["#ef4444", "${theme.primary}"],
             xaxis: { type: "category", labels: { rotate: -45 } },
             yaxis: { tooltip: { enabled: true } },
-            tooltip: { shared: true, intersect: false, y: { formatter: (val) => "$" + val.toFixed(2) } },
+            tooltip: {
+                custom: function({ series, seriesIndex, dataPointIndex, w }) {
+                    const candle = w.globals.initialSeries[0].data[dataPointIndex];
+                    if (!candle || !candle.y) {
+                        return '<div style="padding:8px">No data</div>';
+                    }
+                    const [open, high, low, close] = candle.y;
+                    const isUp = close >= open;
+                    const color = isUp ? '#22c55e' : '#ef4444';
+
+                    return '<div style="padding: 10px 14px; font-size: 13px; line-height: 1.6; min-width: 140px;">' +
+                        '<div style="font-weight: 600; margin-bottom: 6px; color: #1e2937;">' + candle.x + '</div>' +
+                        '<div>Open:  <strong>$' + open.toFixed(2) + '</strong></div>' +
+                        '<div>High:  <strong>$' + high.toFixed(2) + '</strong></div>' +
+                        '<div>Low:   <strong>$' + low.toFixed(2) + '</strong></div>' +
+                        '<div>Close: <strong style="color: ' + color + ';">$' + close.toFixed(2) + '</strong></div>' +
+                    '</div>';
+                }
+            },
             legend: { show: true, position: "top" },
             plotOptions: { candlestick: { colors: { upward: "#22c55e", downward: "#ef4444" } } }
         };
