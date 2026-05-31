@@ -64,7 +64,7 @@ npm start
 npm run dev
 ```
 
-Open https://silverapp-dmedd9dabhg9asey.centralus-01.azurewebsites.net/
+**URL Placeholder (Azure Free Subscription)**
 
 ## Environment Variables
 
